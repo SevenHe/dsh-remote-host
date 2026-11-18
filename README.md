@@ -1,5 +1,22 @@
 # dsh-remote-host
 
+### Install as a community plugin
+
+The repository publishes a plugin index at `market/index.json`, using the format the
+app's **Plugins → Discover → Add index source** expects. Once the repository is public,
+add:
+
+```
+https://raw.githubusercontent.com/SevenHe/dsh-remote-host/main/market/index.json
+```
+
+and the plugin appears under Discover with its version and source commit. Without an
+index you can still install from a checkout:
+
+```sh
+dsh plugin --profile <name> add /path/to/dsh-remote-host
+```
+
 ### Source layout
 
 The browser shim is injected as one classic script inside a single IIFE, so its modules
