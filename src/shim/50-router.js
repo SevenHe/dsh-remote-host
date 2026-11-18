@@ -19,6 +19,16 @@
      * the same stream to the remote leg instead.
      */
     var opens = new Map()
+    /**
+     * Remote-scoped open frames, replayed after the remote leg reconnects: the
+     * mounted socket can drop (1006), which used to leave live streams dead even
+     * though the first frames had already arrived.
+     */
+    var remoteStreams = new Map()
+    /** Suppress reconnect attempts once the browser is closing this socket. */
+    var shuttingDown = false
+    /** Consecutive failed reconnects, for backoff and the error status. */
+    var reconnectAttempts = 0
     var merges = new Map()
     var counter = 0
     /** Frames seen per upstream leg, for the diagnostics report. */
@@ -99,6 +109,9 @@
           flushMerged(clientId, state, true)
           maybeEnd(clientId, state)
         })
+        // The mounted socket can drop after delivering its first frames; keep the
+        // remote side usable by reconnecting and replaying its streams.
+        reconnectRemote()
       })
       // A lazily opened leg is still CONNECTING when the first frame arrives;
       // a browser WebSocket throws on send() there, so buffer until open.
@@ -291,7 +304,55 @@
       return ['local']
     }
 
+    /** Re-open the remote leg's streams on the socket that just replaced it. */
+    function replayRemoteStreams() {
+      if (remoteStreams.size === 0) return
+      remoteStreams.forEach(function (entry, oldId) {
+        byUpstream.delete(oldId)
+        counter += 1
+        var nextId = entry.clientId + '~remote-replay' + counter
+        byUpstream.set(nextId, { clientId: entry.clientId, kind: 'remote', merge: entry.merge, mode: entry.mode })
+        var legs = byClient.get(entry.clientId)
+        if (legs !== undefined) {
+          for (var index = 0; index < legs.length; index += 1) {
+            if (legs[index].kind === 'remote') legs[index] = { kind: 'remote', upstreamId: nextId }
+          }
+        }
+        remoteStreams.delete(oldId)
+        remoteStreams.set(nextId, entry)
+        try {
+          sendLeg('remote', JSON.stringify({ type: 'open', streamId: nextId, endpoint: entry.endpoint, payload: entry.payload }))
+        } catch (error) { /* the next attempt retries */ }
+      })
+      note('replay-remote', { streams: remoteStreams.size })
+    }
+
+    /** Reopen the remote leg after it dropped (1006), then replay its streams. */
+    function reconnectRemote() {
+      if (shuttingDown === true) return
+      reconnectAttempts += 1
+      if (reconnectAttempts < 3) publishStatus('remote', 'connecting')
+      else publishStatus('remote', 'error')
+      upstreams.delete('remote')
+      var delay = Math.min(500 * Math.pow(2, reconnectAttempts - 1), 8000)
+      var attempt = function () {
+        if (shuttingDown === true) return
+        var socket
+        try { socket = connect('remote') } catch (error) { socket = undefined }
+        if (socket === undefined) { reconnectRemote(); return }
+        var onOpen = function () {
+          reconnectAttempts = 0
+          replayRemoteStreams()
+        }
+        if (socket.readyState === 1) onOpen()
+        else if (typeof socket.addEventListener === 'function') socket.addEventListener('open', onOpen)
+      }
+      if (typeof setTimeout === 'function') setTimeout(attempt, delay)
+      else attempt()
+    }
+
     client._close = function () {
+      shuttingDown = true
       merges.forEach(function (state) { settleMergedTone(state) })
       merges.clear()
       upstreams.forEach(function (socket) { try { socket.close() } catch (error) { /* ignore */ } })
@@ -324,6 +385,11 @@
           var upstreamId = frame.streamId + '~' + kind + counter
           byUpstream.set(upstreamId, { clientId: frame.streamId, kind: kind, merge: merge, mode: mode })
           opened.push({ kind: kind, upstreamId: upstreamId })
+          if (kind === 'remote') {
+            remoteStreams.set(upstreamId, {
+              clientId: frame.streamId, endpoint: frame.endpoint, payload: frame.payload, merge: merge, mode: mode,
+            })
+          }
           sendLeg(kind, JSON.stringify({ type: 'open', streamId: upstreamId, endpoint: frame.endpoint, payload: frame.payload }))
         }
         if (opened.length === 0) return
