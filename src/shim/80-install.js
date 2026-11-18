@@ -7,14 +7,22 @@
     try {
       var rev = typeof config.rev === 'string' ? config.rev : undefined
       if (rev === undefined || typeof document !== 'object' || typeof document.addEventListener !== 'function') return
+      var lastInput = Date.now()
+      var markInput = function () { lastInput = Date.now() }
+      var inputEvents = ['pointerdown', 'keydown', 'wheel']
+      for (var eventIndex = 0; eventIndex < inputEvents.length; eventIndex += 1) {
+        document.addEventListener(inputEvents[eventIndex], markInput, true)
+      }
       var check = function () {
-        if (document.visibilityState !== 'hidden') return
         try {
           globalThis.fetch(MOUNT + '/__dsh_remote_host__/report').then(function (response) {
             return response.json()
           }).then(function (payload) {
             if (payload === null || typeof payload !== 'object') return
             if (typeof payload.rev !== 'string' || payload.rev === rev) return
+            // Reload while hidden, or once the page has been idle: a rebuild must
+            // never interrupt typing.
+            if (document.visibilityState !== 'hidden' && Date.now() - lastInput < 20000) return
             note('self-update', { from: rev, to: payload.rev })
             try { location.reload() } catch (error) { /* ignore */ }
           }).catch(function () { /* offline: try next time */ })
@@ -23,6 +31,9 @@
       document.addEventListener('visibilitychange', function () {
         if (document.visibilityState === 'hidden') setTimeout(check, 800)
       })
+      // Poll as well: the desktop shell has no reload shortcut, and waiting for a
+      // tab switch means a rebuild can stay invisible for hours.
+      if (typeof setInterval === 'function') setInterval(check, 20000)
     } catch (error) { /* self update is best effort */ }
   }
 
