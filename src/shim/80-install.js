@@ -3,37 +3,61 @@
  * Install: build the transport over the carrier, patch the global WebSocket, start
  * self-update and prefetch, and adopt a late-injected carrier.
  */
+  /**
+   * Reload the page once when the shim on disk changed, while the window is hidden.
+   *
+   * Two guards matter, both learned the hard way:
+   * - the desktop shell can serve the same cached document again, so a plain
+   *   `location.reload()` reloaded on every refocus without ever picking up the new
+   *   shim. The replacement URL therefore carries a cache-busting parameter.
+   * - if the page still holds the old revision after such a reload, stop trying:
+   *   reloading forever is worse than running one revision behind.
+   */
   function installSelfUpdate() {
     try {
       var rev = typeof config.rev === 'string' ? config.rev : undefined
       if (rev === undefined || typeof document !== 'object' || typeof document.addEventListener !== 'function') return
-      var lastInput = Date.now()
-      var markInput = function () { lastInput = Date.now() }
-      var inputEvents = ['pointerdown', 'keydown', 'wheel']
-      for (var eventIndex = 0; eventIndex < inputEvents.length; eventIndex += 1) {
-        document.addEventListener(inputEvents[eventIndex], markInput, true)
+      var KEY = 'dsh-remote-host:self-update'
+      var read = function () {
+        try {
+          if (globalThis.sessionStorage === undefined || globalThis.sessionStorage === null) return undefined
+          var raw = globalThis.sessionStorage.getItem(KEY)
+          return raw === null ? undefined : JSON.parse(raw)
+        } catch (error) { return undefined }
+      }
+      var write = function (value) {
+        try {
+          if (globalThis.sessionStorage !== undefined && globalThis.sessionStorage !== null) globalThis.sessionStorage.setItem(KEY, JSON.stringify(value))
+        } catch (error) { /* storage may be unavailable */ }
+      }
+      var attempt = read()
+      if (attempt !== undefined && typeof attempt.forRev === 'string' && attempt.forRev !== rev) {
+        note('self-update-give-up', { loaded: rev, wanted: attempt.forRev })
+        return
       }
       var check = function () {
+        if (document.visibilityState !== 'hidden') return
         try {
           globalThis.fetch(MOUNT + '/__dsh_remote_host__/report').then(function (response) {
             return response.json()
           }).then(function (payload) {
             if (payload === null || typeof payload !== 'object') return
-            if (typeof payload.rev !== 'string' || payload.rev === rev) return
-            // Reload while hidden, or once the page has been idle: a rebuild must
-            // never interrupt typing.
-            if (document.visibilityState !== 'hidden' && Date.now() - lastInput < 20000) return
-            note('self-update', { from: rev, to: payload.rev })
-            try { location.reload() } catch (error) { /* ignore */ }
+            var next = typeof payload.rev === 'string' ? payload.rev : undefined
+            if (next === undefined || next === rev) return
+            note('self-update', { from: rev, to: next })
+            write({ forRev: next, at: Date.now() })
+            try {
+              var href = String(location.href)
+              var separator = href.indexOf('?') === -1 ? '?' : '&'
+              location.replace(href + separator + 'dsh-rev=' + encodeURIComponent(next))
+            } catch (error) { /* ignore */ }
           }).catch(function () { /* offline: try next time */ })
         } catch (error) { /* ignore */ }
       }
       document.addEventListener('visibilitychange', function () {
-        if (document.visibilityState === 'hidden') setTimeout(check, 800)
+        if (document.visibilityState === 'hidden') setTimeout(check, 500)
       })
-      // Poll as well: the desktop shell has no reload shortcut, and waiting for a
-      // tab switch means a rebuild can stay invisible for hours.
-      if (typeof setInterval === 'function') setInterval(check, 20000)
+      if (typeof setInterval === 'function') setInterval(check, 60000)
     } catch (error) { /* self update is best effort */ }
   }
 
