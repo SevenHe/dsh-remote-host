@@ -1,0 +1,74 @@
+{
+  "format": 1,
+  "title": {
+    "en": "dsh-remote-host",
+    "zh": "dsh-remote-host"
+  },
+  "description": {
+    "en": "Mount a remote DeepSeek Harness host into this app: sessions, workspaces, super agent, tools and environment, all driven from here.",
+    "zh": "把远端 DeepSeek Harness 宿主挂载到本机 App：会话、工作区、super agent、工具与环境统一在这里操作。"
+  },
+  "metadata": {
+    "categories": {
+      "remote": {
+        "title": {
+          "en": "Remote",
+          "zh": "远端协作"
+        }
+      }
+    },
+    "labels": {
+      "ssh": {
+        "title": {
+          "en": "SSH",
+          "zh": "SSH"
+        }
+      },
+      "ui": {
+        "title": {
+          "en": "Sidebar",
+          "zh": "侧栏"
+        }
+      }
+    }
+  },
+  "plugins": [
+    {
+      "name": "dsh-remote-host",
+      "title": {
+        "en": "Remote host",
+        "zh": "远端宿主"
+      },
+      "description": {
+        "en": "Mount a remote Harness so its sessions, workspaces and super agent appear in the native UI, over HTTP or an SSH tunnel.",
+        "zh": "挂载远端 Harness，让它的会话、工作区与 super agent 直接出现在原生界面，支持 HTTP 与 SSH 隧道。"
+      },
+      "author": "Seven He",
+      "homepage": "https://github.com/SevenHe/dsh-remote-host",
+      "repository": {
+        "url": "https://github.com/SevenHe/dsh-remote-host"
+      },
+      "metadata": {
+        "category": "remote",
+        "labels": [
+          "ssh",
+          "ui"
+        ]
+      },
+      "versions": [
+        {
+          "version": "1.12.0",
+          "publishTimestamp": 1795000290,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/SevenHe/dsh-remote-host",
+            "commit": "cdde1c54f387e408d0d438f83face13a9f83ccb3"
+          },
+          "engines": {
+            "dsh": "^0.2.2-rc.3"
+          }
+        }
+      ]
+    }
+  ]
+}
