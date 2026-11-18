@@ -3,10 +3,6 @@
  * Configuration and the shared mutable state of this shim: the mount point, the
  * remote id/workspace registries, and the flags read once at install time.
  */
-/**
- * Configuration and the shared mutable state of this shim: the mount point, the
- * remote id/workspace registries, and the feature flags read once at install time.
- */
   var config = globalThis.__DSH_REMOTE_HOST__
   if (config === null || typeof config !== 'object' || typeof config.mount !== 'string') return
   var MOUNT = config.mount
@@ -52,6 +48,26 @@
   /** Remote workspaces in their own order, for the browser half's remote groups. */
   var remoteSpaces = []
 
+  /** Notify page listeners (the sidebar half) that published state changed. */
+  function announce(name, detail) {
+    try {
+      if (typeof document !== 'object' || document === null || typeof CustomEvent !== 'function') return
+      document.dispatchEvent(new CustomEvent('dsh-remote-host:' + name, { detail: detail }))
+    } catch (error) { /* the page may not accept events yet */ }
+  }
+
+  /** Connection state per leg, surfaced by the sidebar's status indicator. */
+  var legStatus = { remote: 'connecting', local: 'connecting' }
+
+  /** Record and publish one leg's state: 'connecting' | 'open' | 'error'. */
+  function publishStatus(kind, state) {
+    try {
+      legStatus[kind] = state
+      globalThis.__DSH_REMOTE_HOST_STATUS__ = { remote: legStatus.remote, local: legStatus.local }
+      announce('status', globalThis.__DSH_REMOTE_HOST_STATUS__)
+    } catch (error) { /* status is advisory */ }
+  }
+
   /** Publish the remote id set and workspace layout for the sidebar sections. */
   function publishRemoteState() {
     try {
@@ -75,6 +91,7 @@
       remoteIdList = ids
       globalThis.__DSH_REMOTE_HOST_IDS__ = ids
       globalThis.__DSH_REMOTE_HOST_STATE__ = { ids: ids, label: GROUP_LABEL, workspaces: spaces }
+      announce('state', { ids: ids.length, workspaces: spaces.length })
     } catch (error) { /* publishing is best effort */ }
   }
   /** Cheap guard so unchanged layouts are not republished on every merge. */

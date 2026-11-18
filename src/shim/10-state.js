@@ -3,10 +3,6 @@
  * What the shim publishes to the page (remote ids, workspace layout) and the event
  * bookkeeping that keeps remote waterfalls answerable.
  */
-/**
- * What the shim publishes to the page (remote ids, workspace layout) and the event
- * bookkeeping that keeps remote waterfalls answerable.
- */
   function localFetch(input, init) {
     return previous.fetch ? previous.fetch(input, init) : globalThis.fetch(input, init)
   }

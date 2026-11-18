@@ -3,10 +3,6 @@
  * Workspace stream merging: fold the remote workspaces into one group (or keep
  * theirs), prune stale ones, and label rows with their workspace name.
  */
-/**
- * Workspace stream merging: fold the remote's workspaces into one group (or keep
- * its own), prune stale ones, and label rows with their workspace name.
- */
   /** Workspace streams are merged: one baseline carrying both hosts' records. */
   var MERGED_ENDPOINTS = { 'workspace/follow': true }
 

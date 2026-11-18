@@ -44,12 +44,16 @@
         return undefined
       }
       note('leg-open-requested', { kind: kind, url: target })
+      publishStatus(kind, 'connecting')
       // A shell-provided socket may implement only addEventListener; assigning
       // `onopen` there would silently drop the event and hang the connection.
       var on = typeof socket.addEventListener === 'function'
         ? function (type, handler) { socket.addEventListener(type, handler) }
         : function (type, handler) { socket['on' + type] = handler }
-      on('open', function () { note('leg-opened', { kind: kind }) })
+      on('open', function () {
+        note('leg-opened', { kind: kind })
+        publishStatus(kind, 'open')
+      })
       // A leg that never opens must be distinguishable from one that opens and
       // then goes quiet, so sample its state instead of waiting forever.
       if (schedule !== undefined) {
@@ -59,9 +63,11 @@
       }
       on('error', function (event) {
         note('leg-error', { kind: kind, message: String((event && (event.message || event.type)) || 'error') })
+        publishStatus(kind, 'error')
       })
       on('close', function (event) {
         note('leg-closed', { kind: kind, code: (event && event.code) || 0 })
+        if (kind !== 'local') publishStatus(kind, 'error')
       })
       on('message', function (event) {
         relays[kind] = (relays[kind] || 0) + 1

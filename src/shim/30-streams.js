@@ -3,10 +3,6 @@
  * The minimal WebSocket face the stream client drives, plus the listener dispatch
  * that mirrors a real socket.
  */
-/**
- * The minimal WebSocket face the stream client drives, plus the listener dispatch
- * that mirrors a real socket.
- */
   /** Minimal WebSocket face the stream client drives. */
   function FakeSocket() {
     this.readyState = 0
