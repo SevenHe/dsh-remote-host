@@ -1,5 +1,31 @@
 # dsh-remote-host
 
+### Source layout
+
+The browser shim is injected as one classic script inside a single IIFE, so its modules
+are *concatenated* rather than imported: they share one scope and rely on declaration
+order. `lib/shim.js` is generated — edit `src/shim/*.js` and rebuild.
+
+```sh
+node scripts/build-shim.mjs          # regenerate lib/shim.js
+node scripts/build-shim.mjs --check  # CI: fail when lib/shim.js is stale
+```
+
+| module | contents |
+|---|---|
+| `src/shim/00-config.js` | mount point, feature flags, shared registries |
+| `src/shim/10-state.js` | published remote state (ids, workspace layout) and event bookkeeping |
+| `src/shim/20-transport.js` | request classification, mount/mux URL derivation |
+| `src/shim/30-streams.js` | the WebSocket face the stream client drives |
+| `src/shim/40-workspace.js` | workspace merging, pruning and row labelling |
+| `src/shim/50-router.js` | the mux router: two legs, one browser socket, per-stream forwarding |
+| `src/shim/60-runtime.js` | socket factory, diagnostics, group refresh, prefetches |
+| `src/shim/70-lookup.js` | session-list merge and event-answer rewrite |
+| `src/shim/80-install.js` | transport installation, global WebSocket patch, self-update |
+
+That split was verified **byte-identical** to the previous single-file shim: structure
+changed, behaviour did not.
+
 ## Architecture
 
 Three halves, one idea: the remote host already speaks the app's protocol, so the plugin
