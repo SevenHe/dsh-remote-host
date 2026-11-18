@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # lib/shim.js is generated from src/shim/*.js: fail when it is stale.
+      - name: Shim build is up to date
+        run: node scripts/build-shim.mjs --check
+      - name: Syntax
+        run: |
+          node --check lib/index.js
+          node --check lib/client.js
+          node --check lib/shim.js
+          node --check scripts/setup.mjs
+          node --check scripts/ssh-helper-deploy.mjs
+          node --check scripts/build-shim.mjs
+      - name: Manifest is consistent
+        run: node scripts/verify-manifest.mjs
+      - name: Plugin index is well formed
+        run: node scripts/verify-index.mjs
