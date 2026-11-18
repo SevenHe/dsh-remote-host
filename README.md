@@ -1,5 +1,15 @@
 # dsh-remote-host
 
+## Contributing and CI
+
+`CONTRIBUTING.md` describes the edit → build → verify → push loop. CI
+(`.github/workflows/ci.yml`) runs on every push and pull request and fails when:
+
+* `lib/shim.js` is stale relative to `src/shim/*.js` (`build-shim.mjs --check`);
+* any file the manifest advertises is missing (`verify-manifest.mjs`);
+* `market/index.json` is not a valid index (`verify-index.mjs`);
+* any shipped source fails `node --check`.
+
 ## Releasing
 
 The shim is generated, so a release is: edit sources, rebuild, bump, commit, push, then

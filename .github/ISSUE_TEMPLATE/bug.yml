@@ -1,0 +1,33 @@
+name: Bug report
+description: Something in the plugin does not behave as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: App version on both ends, plugin version, and OS.
+      placeholder: "local 0.2.2-rc.3 / remote 0.2.2-rc.3, plugin 1.12.0, macOS 15"
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Diagnostics
+      description: |
+        Paste GET /devbox/__dsh_remote_host__/report (leg state, routing decisions,
+        errors) and relevant log lines. Remove hosts, tokens and cookies first.
+      render: json
+  - type: textarea
+    id: config
+    attributes:
+      label: Plugin configuration
+      description: The dsh-remote-host row from your profile patch, secrets removed.
+      render: yaml
