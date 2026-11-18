@@ -1,5 +1,32 @@
 # dsh-remote-host
 
+## Releasing
+
+The shim is generated, so a release is: edit sources, rebuild, bump, commit, push, then
+refresh the index entry.
+
+```sh
+node scripts/build-shim.mjs            # regenerate lib/shim.js from src/shim
+node scripts/build-shim.mjs --check    # CI gate: fails when the build is stale
+node --check lib/index.js && node --check lib/client.js
+
+# bump the version in package.json, then record the new commit in market/index.json:
+git commit -am "release: vX.Y.Z"
+git push
+```
+
+`market/index.json` lists one `versions[]` entry per release, with
+`source.type: "git"`, the repository URL and the **full 40-hex commit** that contains the
+release. Keep entries in descending version order; a published entry is immutable — new
+builds get a new commit and a new entry.
+
+Two rules that keep the plugin shippable:
+
+* **Never commit a token or cookie.** `~/.dsh-github-token` (mode 0600) and the remote
+  cookie belong outside the repository; `.gitignore` blocks the common spellings.
+* **Never commit a host identity.** Commit authors are the maintainer's neutral address,
+  and examples use placeholders (`devbox.example.com:3080`, `/home/user`).
+
 ### Install as a community plugin
 
 The repository publishes a plugin index at `market/index.json`, using the format the
