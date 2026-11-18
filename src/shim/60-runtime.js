@@ -35,8 +35,13 @@
     events: [],
   }
 
-  /** Local sink, used while the Host half has not been reloaded yet. */
-  var SINK = 'http://127.0.0.1:19777/report'
+  /**
+   * Optional extra sink for development, off unless `diagnosticsSink` names one.
+   * Diagnostics already reach the Host through the mount report route.
+   */
+  var SINK = typeof config.diagnosticsSink === 'string' && config.diagnosticsSink.length > 0
+    ? config.diagnosticsSink
+    : undefined
 
   function post(url, body) {
     try {
@@ -58,7 +63,7 @@
   function publish() {
     var body = JSON.stringify(diag)
     post(MOUNT + '/__dsh_remote_host__/report', body)
-    post(SINK, body)
+    if (SINK !== undefined) post(SINK, body)
   }
 
   function note(name, data) {
