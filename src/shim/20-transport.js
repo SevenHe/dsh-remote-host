@@ -3,10 +3,6 @@
  * Request classification: which calls belong to the remote host, how the mount and
  * mux socket URLs are derived, and the error-envelope helper.
  */
-/**
- * Request classification: which calls belong to the remote host, how the mount URL
- * and the mux socket URL are derived, and the error-envelope helper.
- */
   /** Rewrite a remote waterfall answer so the remote peer accepts it. */
   function rewriteEventResult(init) {
     try {
