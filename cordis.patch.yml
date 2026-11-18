@@ -1,0 +1,19 @@
+# Bundle patch for dsh-remote-host.
+#
+# Values for this machine belong in the profile layer
+# (~/.dsh/profiles/<profile>/cordis.patch.yml), which scripts/setup.mjs writes
+# as an id-targeted override:
+#
+#   - id: dsh-remote-host
+#     config:
+#       upstream: http://devbox.example.com:3080
+#       authority: devbox.example.com:3080
+#       mount: /devbox
+#       label: devbox
+#       cookieFile: ~/.dsh/dsh-remote-host/cookie.txt
+#
+# The bundle mounts the remote origin at `mount` on this Host's own origin and
+# injects lib/shim.js into the index, which routes per-session API traffic.
+- insert:
+    - id: dsh-remote-host
+      name: dsh-remote-host
