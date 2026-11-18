@@ -7,3 +7,9 @@ node_modules/
 .DS_Store
 coverage/
 dist/
+
+# credentials and host identities never belong in the repository
+*.token
+.dsh-github-token
+cookie.txt
+*.credentials.yaml
