@@ -1,0 +1,13 @@
+/**
+ * dsh-remote-host — browser shim (injected into the index before boot).
+ *
+ * Owns one decision: for each Host API call, does it belong to this machine or
+ * to the mounted remote host? Local calls keep the original transport; remote
+ * calls are sent to the mount, where the Host relays them with the remote's own
+ * credential. `session/list` is merged so remote sessions appear in the native
+ * sidebar, and stream opens are routed per session the same way.
+ *
+ * Every path falls back to the unmodified behaviour when anything looks off, so
+ * a bad config degrades to a normal Harness rather than a broken one.
+ */
+(function () {

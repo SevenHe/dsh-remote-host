@@ -46,5 +46,9 @@
         "@deepseek-ai/dsh-client-ui-sidebar"
       ]
     }
+  },
+  "scripts": {
+    "build:shim": "node scripts/build-shim.mjs",
+    "check": "node scripts/build-shim.mjs --check && node --check lib/index.js && node --check lib/client.js"
   }
 }
