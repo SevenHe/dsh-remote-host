@@ -157,6 +157,8 @@
     note('installed', { carrier: diag.hasRpc === true ? 'rpc' : 'fetch', streams: STREAMS, streamBaseUrl: diag.streamBaseUrl, group: GROUP_MODE })
     prefetchWorkspaces()
     prefetchRemoteSessions()
+    // Last: breadcrumbs must never sit between a carrier and its first call.
+    traceInstall()
     return built
   }
 
