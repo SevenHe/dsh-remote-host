@@ -1135,3 +1135,24 @@
 /* Local addition (not upstream): the shipped rule caps this label at 45% for the short
    工作区; the remote label also names the host, so let it use the width it needs. */
 #drh-remote-block .drh-sectionLabel:not(.drh-sectionLabelHidden) { max-width: none; }
+
+/* Local addition (not upstream): connection state of the mounted host, shown before the
+   section label. Green connected, red failed, spinner while connecting. */
+#drh-remote-block .drh-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: var(--dsw-alias-label-tertiary, rgba(120, 120, 128, 0.6));
+}
+#drh-remote-block .drh-dot[data-state='open'] { background: #2ea043; }
+#drh-remote-block .drh-dot[data-state='error'] { background: #d1242f; }
+#drh-remote-block .drh-dot[data-state='connecting'] {
+  background: transparent;
+  border: 1.5px solid var(--dsw-alias-label-tertiary, rgba(120, 120, 128, 0.6));
+  border-top-color: transparent;
+  animation: drh-spin 0.8s linear infinite;
+}
+@keyframes drh-spin { to { transform: rotate(360deg); } }
