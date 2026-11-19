@@ -29,3 +29,7 @@ jobs:
         run: node scripts/verify-manifest.mjs
       - name: Plugin index is well formed
         run: node scripts/verify-index.mjs
+      # The shim's data-plane decisions (group modes, session/list merge, event
+      # filtering, routing, published snapshot) drive the whole plugin.
+      - name: Data-plane tests
+        run: npm test
