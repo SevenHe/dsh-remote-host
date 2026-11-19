@@ -100,7 +100,7 @@ const crashes = recentRendererCrashes()
  * styling is not safe on this build. Drop only that line, so the app keeps every remote
  * feature with the shipped rows. The plugin stays registered.
  */
-if (crashes >= 1 && checkOnly !== true) {
+if (crashes >= 2 && checkOnly !== true) {
   const degraded = readFileSync(patchPath, 'utf8')
   if (/^\s+sidebar: sections\s*$/m.test(degraded)) {
     copyFileSync(patchPath, patchPath + '.degrade-' + stamp)
