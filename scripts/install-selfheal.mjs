@@ -74,5 +74,10 @@ const lines = [
 writeFileSync(plistPath, lines.join('\n'))
 bootout()
 execFileSync('launchctl', ['bootstrap', 'gui/' + process.getuid(), plistPath], { stdio: 'inherit' })
+// post-write verification: a plist that vanishes installs nothing at the next login
+if (!existsSync(plistPath) || statSync(plistPath).size === 0) {
+  console.error('install-selfheal: the plist disappeared after bootstrap: ' + plistPath)
+  process.exit(3)
+}
 console.log('self-heal agent installed: ' + plistPath)
 console.log('node: ' + node + ' | profile: ' + profileName)
