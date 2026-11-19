@@ -80,13 +80,18 @@
       var projections = raw.projections
       var values = projections === null || typeof projections !== 'object' ? undefined : projections.values
       var projected = values === null || typeof values !== 'object' ? undefined : values.title
-      published.push({
+      var entry = {
         id: raw.sessionId,
         title: typeof projected === 'string' && projected.length > 0 ? projected
           : (typeof raw.title === 'string' ? raw.title : (typeof raw.name === 'string' ? raw.name : raw.sessionId)),
         updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : null,
         running: raw.running === true,
-      })
+      }
+      // The shipped hover card shows the Session's working directory, and the block's
+      // "copy remote path" row action reads the same value; both come from the remote
+      // list row, which carries it as cwd.
+      if (typeof raw.cwd === 'string' && raw.cwd.length > 0) entry.cwd = raw.cwd
+      published.push(entry)
     }
     globalThis.__DSH_REMOTE_HOST_SESSIONS__ = published
     announce('sessions', { count: published.length })
