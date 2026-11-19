@@ -126,7 +126,10 @@
         sessionWorkspace.set(id, title)
         ids.push(id)
       }
-      spaces.push({ title: title, ids: ids })
+      // Keep the raw remote workspace id so workspace-level calls (rename/delete) can address
+      // it; merged rows carry a drh: prefix that those RPCs do not accept.
+      var rawWorkspaceId = String(item.workspaceId === undefined || item.workspaceId === null ? '' : item.workspaceId).replace(/^drh:/, '')
+      spaces.push({ title: title, id: rawWorkspaceId, ids: ids })
     }
     if (spaces.length > 0) remoteSpaces = spaces
     publishRemoteState()
