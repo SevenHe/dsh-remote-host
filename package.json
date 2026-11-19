@@ -1,6 +1,6 @@
 {
   "name": "dsh-remote-host",
-  "version": "1.13.0",
+  "version": "1.13.1",
   "description": "Mount a remote DeepSeek Harness host into this app's native UI — its sessions, workspaces, super agent, tools and environment, driven from here.",
   "type": "module",
   "main": "lib/index.js",
@@ -49,6 +49,8 @@
   },
   "scripts": {
     "build:shim": "node scripts/build-shim.mjs",
-    "check": "node scripts/build-shim.mjs --check && node --check lib/index.js && node --check lib/client.js"
+    "check": "node scripts/build-shim.mjs --check && node --check lib/index.js && node --check lib/client.js && node scripts/verify-manifest.mjs && node scripts/verify-index.mjs",
+    "ensure-profile": "node scripts/ensure-profile.mjs",
+    "install-selfheal": "node scripts/install-selfheal.mjs"
   }
 }
