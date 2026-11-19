@@ -36,7 +36,9 @@
    */
   var SUPERAGENT_REMOTE = config.superagent === 'remote'
   /** 'single' folds every remote Workspace into one group under this label. */
-  var GROUP_MODE = config.group === 'workspace' ? 'workspace' : 'single'
+  // single: fold every remote workspace into one shipped group; workspace: keep each one as
+  // a shipped group; none: publish remote data only, so a plugin-rendered block owns it.
+  var GROUP_MODE = config.group === 'workspace' ? 'workspace' : (config.group === 'none' ? 'none' : 'single')
   var GROUP_ID = 'drh:devbox'
   /** Prefix that marks a merged remote workspace row (used by the section stylesheet). */
   var REMOTE_WORKSPACE_PREFIX = 'drh:'
