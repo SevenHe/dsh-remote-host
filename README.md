@@ -54,6 +54,27 @@ index you can still install from a checkout:
 dsh plugin --profile <name> add /path/to/dsh-remote-host
 ```
 
+### Keeping the plugin registered after an app update
+
+The desktop app rewrites `profiles/<name>/package.json` while migrating a profile: it
+keeps `dependencies` but drops bundle entries it does not ship, which silently unloads
+this plugin after an update. Two idempotent scripts deal with that:
+
+```sh
+# repair now (bundle entry + config row, recovered from the newest backup)
+node scripts/ensure-profile.mjs --profile desktop
+node scripts/ensure-profile.mjs --profile desktop --check   # exit 1 when a repair is needed
+
+# install a LaunchAgent that repairs at login, every 30 min, and whenever the app
+# bundle is replaced — i.e. before the next launch after an update
+node scripts/install-selfheal.mjs --profile desktop --node "$(command -v node)"
+node scripts/install-selfheal.mjs --uninstall
+```
+
+`--node` matters when the installer runs inside the app's bundled runtime, which cannot
+be executed as node without `ELECTRON_RUN_AS_NODE`. The agent logs to
+`~/Library/Logs/dsh-remote-host-ensure.log`.
+
 ### Sidebar capabilities
 
 The opt-in two-section sidebar (`sidebar: sections`) adds a remote section next to the
