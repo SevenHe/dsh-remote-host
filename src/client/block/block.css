@@ -1124,4 +1124,42 @@
 }
 @keyframes drh-spin { to { transform: rotate(360deg); } }
 
+/* Local addition (not upstream): the ported sheet folds the shipped header control (28px box,
+   16px glyph) and the shipped row/group action (24px box, 14px glyph, 4px radius, compensated
+   -4px margins) onto one .drh-iconButton rule. The row variant is spelled out here so the
+   header keeps its 28px target while the row clusters match the shipped rows exactly. */
+.drh-rowAction {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px;
+  border: none;
+  border-radius: var(--dsw-radius-xs);
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Keep the focus ring on the original compact outline. */
+.drh-rowAction:focus-visible {
+  outline-offset: -2px;
+}
+
+@media (hover: hover) {
+  .drh-rowAction:hover {
+    color: var(--dsw-alias-label-primary);
+  }
+}
+
+/* Local addition (not upstream): the shipped cluster advances 29px per control (24px box with
+   -4px compensated margins). The ported 12px gap lands on 28px, which walks the leading
+   control 2px right of where the shipped row puts it, so the row cluster gap is restated. */
+#drh-remote-block .drh-rowActions {
+  gap: 13px;
+}
+
 
