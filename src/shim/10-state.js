@@ -56,6 +56,43 @@
     })
   }
 
+  /**
+   * Window rule: a remote Session is worth showing when it runs or was active
+   * recently. A devbox accumulates hundreds of old Sessions, so the merged list and
+   * the published block state read this one predicate.
+   */
+  function isActiveRemote(item) {
+    if (item === null || typeof item !== 'object') return false
+    return item.running === true || (typeof item.updatedAt === 'number' && item.updatedAt >= WINDOW_FLOOR)
+  }
+
+  /**
+   * Publish the remote summaries the plugin-rendered block reads. With `group: none`
+   * the shipped list never carries a remote Session, so this snapshot is the block's
+   * only data source; the list merge and the event path both refresh it. A remote
+   * Session has no list `title` field — its title lives in the `title` projection.
+   */
+  function publishRemoteSessions(remoteItems) {
+    var published = []
+    for (var index = 0; index < remoteItems.length; index += 1) {
+      var raw = remoteItems[index]
+      if (raw === null || typeof raw !== 'object' || typeof raw.sessionId !== 'string') continue
+      var projections = raw.projections
+      var values = projections === null || typeof projections !== 'object' ? undefined : projections.values
+      var projected = values === null || typeof values !== 'object' ? undefined : values.title
+      published.push({
+        id: raw.sessionId,
+        title: typeof projected === 'string' && projected.length > 0 ? projected
+          : (typeof raw.title === 'string' ? raw.title : (typeof raw.name === 'string' ? raw.name : raw.sessionId)),
+        updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : null,
+        running: raw.running === true,
+      })
+    }
+    globalThis.__DSH_REMOTE_HOST_SESSIONS__ = published
+    announce('sessions', { count: published.length })
+    return published
+  }
+
   async function mergeSessionList(input, init, request) {
     var responses = await Promise.all([
       localFetch(input, init),
@@ -91,21 +128,7 @@
     }
     // Publish the remote summaries so a plugin-rendered block can show titles and times
     // without the shipped list carrying remote sessions.
-    try {
-      var published = []
-      for (var p = 0; p < remoteItems.length; p += 1) {
-        var raw = remoteItems[p]
-        if (raw === null || typeof raw !== 'object' || typeof raw.sessionId !== 'string') continue
-        published.push({
-          id: raw.sessionId,
-          title: typeof raw.title === 'string' ? raw.title : (typeof raw.name === 'string' ? raw.name : raw.sessionId),
-          updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : null,
-          running: raw.running === true,
-        })
-      }
-      globalThis.__DSH_REMOTE_HOST_SESSIONS__ = published
-      announce('sessions', { count: published.length })
-    } catch (error) { /* publishing is best effort */ }
+    try { publishRemoteSessions(remoteItems) } catch (error) { /* publishing is best effort */ }
     var value = {}
     for (var key in localBody.result.value) { if (Object.prototype.hasOwnProperty.call(localBody.result.value, key)) value[key] = localBody.result.value[key] }
     value.items = GROUP_MODE === 'none' ? localItems : merged
