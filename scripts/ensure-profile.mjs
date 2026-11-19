@@ -94,6 +94,20 @@ function recentRendererCrashes() {
   } catch (error) { return 0 }
 }
 const crashes = recentRendererCrashes()
+
+/**
+ * auto-degrade: a renderer crash while the experimental two-section sidebar is on means the
+ * styling is not safe on this build. Drop only that line, so the app keeps every remote
+ * feature with the shipped rows. The plugin stays registered.
+ */
+if (crashes >= 1 && checkOnly !== true) {
+  const degraded = readFileSync(patchPath, 'utf8')
+  if (/^\s+sidebar: sections\s*$/m.test(degraded)) {
+    copyFileSync(patchPath, patchPath + '.degrade-' + stamp)
+    writeFileSync(patchPath, degraded.replace(/^[ \t]*sidebar: sections[ \t]*\n/m, ''))
+    console.log('ensure-profile: auto-degrade — removed sidebar: sections after ' + crashes + ' renderer crash(es)')
+  }
+}
 if (crashes >= 2 && checkOnly !== true) {
   console.error('ensure-profile: ' + crashes + ' renderer crashes in the last 30 minutes; leaving ' + PLUGIN + ' unregistered')
   console.error('ensure-profile: re-run with --force once the cause is fixed')
