@@ -38,6 +38,9 @@
   /** 'single' folds every remote Workspace into one group under this label. */
   var GROUP_MODE = config.group === 'workspace' ? 'workspace' : 'single'
   var GROUP_ID = 'dsh-remote-host:devbox'
+  /** Prefix that marks a merged remote workspace row (used by the section stylesheet). */
+  var REMOTE_WORKSPACE_PREFIX = 'dsh-remote-host:'
+
   /** Short name used for the merged workspace path. */
   var GROUP_PATH = typeof config.label === 'string' && config.label.length > 0 ? config.label : 'devbox'
   /**
