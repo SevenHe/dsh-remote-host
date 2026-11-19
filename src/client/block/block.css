@@ -1172,8 +1172,14 @@ html[data-platform='darwin'] .drh-menuBacking {
   left: anchor(left);
   width: anchor-size(width, 0px);
   height: anchor-size(height, 0px);
-  z-index: -1;
+  /* The opaque base must paint BELOW the frosted layer (material is -1). Equal
+   * z-indices would let this later-in-DOM box cover the blur, which flattened the card
+   * into an opaque dark rectangle. */
+  z-index: -2;
   background: var(--dsw-alias-bg-base);
+  /* Upstream rounds the backing too; without it the square base covers the surface's
+   * 16px corners in darwin mode. */
+  border-radius: inherit;
   pointer-events: none;
 }
 
@@ -1401,3 +1407,16 @@ html[data-platform='darwin'] .drh-menuBacking {
 }
 
 
+
+/* Destructive menu row: shipped error colour with the danger hover fill. */
+.drh-menuDanger { color: var(--dsw-alias-state-error-primary); }
+.drh-menuDanger .drh-menuIcon { color: var(--dsw-alias-state-error-primary); }
+@media (hover: hover) {
+  .drh-menuDanger:hover:not(:disabled):not([aria-disabled='true']) {
+    background: var(--dsw-alias-interactive-bg-hover-danger);
+  }
+}
+.drh-menuDanger:focus-visible:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  outline: none;
+}
