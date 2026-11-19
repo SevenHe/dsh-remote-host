@@ -1156,3 +1156,12 @@
   animation: drh-spin 0.8s linear infinite;
 }
 @keyframes drh-spin { to { transform: rotate(360deg); } }
+
+/* Local addition (not upstream): this header carries three controls — sort, new remote
+   workspace, expand/collapse — while the ported cluster caps at 60px (two). Widen the
+   cluster for the visible state only, so the collapsed state still yields to the search. */
+#drh-remote-block .drh-headerActions:not(.drh-headerActionsHidden) {
+  max-width: none;
+  overflow: visible;
+}
+
