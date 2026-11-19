@@ -75,6 +75,37 @@ node scripts/install-selfheal.mjs --uninstall
 be executed as node without `ELECTRON_RUN_AS_NODE`. The agent logs to
 `~/Library/Logs/dsh-remote-host-ensure.log`.
 
+### Remote workspaces are workspaces
+
+`group: workspace` is the mode that gives the remote side the same shape as the local side:
+
+```yaml
+- id: dsh-remote-host
+  config:
+    upstream: http://devbox.example.com:3080
+    authority: devbox.example.com:3080
+    mount: /devbox
+    label: devbox
+    group: workspace      # every remote workspace stays its own shipped group
+    sectionHeaders: true  # heading + divider before the merged remote groups
+    streams: true
+    superagent: remote
+```
+
+What the shipped sidebar then renders, top to bottom:
+
+1. `工作区` with its own search / filter / new-workspace controls;
+2. each **local** workspace as a collapsible directory with its sessions;
+3. a `远端工作区 · <label>` heading and divider (inserted by this plugin);
+4. each **remote** workspace as a collapsible directory with its sessions.
+
+Groups in 2 and 4 are the shipped group component: same icons, same session rows, same
+times, same expander, same pin / archive / search / drag / context menu. The plugin adds
+the heading in 3 and merges the data; it renders no rows of its own.
+
+`group: single` is the alternative: every remote workspace folds into one group named after
+`label`, which is useful when a host has too many directories to list.
+
 ### Why the shipped list is not replaced
 
 The platform exposes these sidebar slots (measured in the running app):

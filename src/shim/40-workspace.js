@@ -110,6 +110,10 @@
       if (typeof item.workspaceId === 'string') remoteWorkspaceIds.add(item.workspaceId)
       var copy = {}
       for (var key in item) { if (Object.prototype.hasOwnProperty.call(item, key)) copy[key] = item[key] }
+      // Stable marker on the merged row: the shipped renderer keys rows by workspaceId, so
+      // this prefix is what lets a stylesheet treat these rows as the remote section.
+      // Session ids are untouched, so expanding a group and opening a session still work.
+      if (typeof item.workspaceId === 'string') copy.workspaceId = REMOTE_WORKSPACE_PREFIX + item.workspaceId
       copy.sessionIds = ids
       items.push(copy)
     }
