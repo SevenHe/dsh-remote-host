@@ -125,7 +125,9 @@
   }
 
   function mergeBaseline(local, remote) {
-    var kept = GROUP_MODE === 'single' ? collapseRemoteSide(remote) : pruneRemoteSide(remote)
+    var kept = GROUP_MODE === 'none'
+      ? { items: [], archivedSessionIds: [], pinnedSessionIds: [] }
+      : (GROUP_MODE === 'single' ? collapseRemoteSide(remote) : pruneRemoteSide(remote))
     return {
       items: local.items.concat(kept.items),
       archivedSessionIds: local.archivedSessionIds.concat(kept.archivedSessionIds),

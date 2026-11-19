@@ -89,9 +89,26 @@
       remoteSessions.add(entry.sessionId)
       merged.push(labelRemoteItem(entry))
     }
+    // Publish the remote summaries so a plugin-rendered block can show titles and times
+    // without the shipped list carrying remote sessions.
+    try {
+      var published = []
+      for (var p = 0; p < remoteItems.length; p += 1) {
+        var raw = remoteItems[p]
+        if (raw === null || typeof raw !== 'object' || typeof raw.sessionId !== 'string') continue
+        published.push({
+          id: raw.sessionId,
+          title: typeof raw.title === 'string' ? raw.title : (typeof raw.name === 'string' ? raw.name : raw.sessionId),
+          updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : null,
+          running: raw.running === true,
+        })
+      }
+      globalThis.__DSH_REMOTE_HOST_SESSIONS__ = published
+      announce('sessions', { count: published.length })
+    } catch (error) { /* publishing is best effort */ }
     var value = {}
     for (var key in localBody.result.value) { if (Object.prototype.hasOwnProperty.call(localBody.result.value, key)) value[key] = localBody.result.value[key] }
-    value.items = merged
+    value.items = GROUP_MODE === 'none' ? localItems : merged
     note('list-merge', { local: localItems.length, remote: remoteItems.length, visible: merged.length - localItems.length })
     publishRemoteState()
     refreshGroups()
