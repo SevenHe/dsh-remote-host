@@ -437,7 +437,7 @@
     }
 
     var local = connect('local')
-    if (local === undefined) throw new Error('dsh-remote-host: no local mux socket')
+    if (local === undefined) throw new Error('drh: no local mux socket')
     activeRouter = client
     // Readiness comes from the real socket's open event, never from here.
     client.readyState = typeof local.readyState === 'number' ? local.readyState : 0

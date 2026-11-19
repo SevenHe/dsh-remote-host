@@ -97,10 +97,10 @@
     }
     if (signal !== undefined && signal !== null) init.signal = signal
     var response = await globalThis.fetch(MOUNT + '/api/' + endpoint, init)
-    if (response.ok !== true) throw new Error('dsh-remote-host: mount answered HTTP ' + String(response.status))
+    if (response.ok !== true) throw new Error('drh: mount answered HTTP ' + String(response.status))
     var envelope = await response.json()
     if (envelope === null || typeof envelope !== 'object' || envelope.result === undefined) {
-      throw new Error('dsh-remote-host: invalid mount envelope')
+      throw new Error('drh: invalid mount envelope')
     }
     return envelope.result
   }
