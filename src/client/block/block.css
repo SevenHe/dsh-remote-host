@@ -1131,3 +1131,7 @@
     transition: none;
   }
 }
+
+/* Local addition (not upstream): the shipped rule caps this label at 45% for the short
+   工作区; the remote label also names the host, so let it use the width it needs. */
+#drh-remote-block .drh-sectionLabel { max-width: none; }
