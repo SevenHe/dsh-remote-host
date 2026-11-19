@@ -86,7 +86,7 @@
     return {
       items: [{
         workspaceId: GROUP_ID,
-        path: GROUP_LABEL,
+        path: GROUP_PATH,
         title: GROUP_LABEL,
         sessionIds: sessionIds,
         createdAt: createdAt ?? new Date().toISOString(),

@@ -22,9 +22,25 @@ const flag = (name, fallback) => {
   return index === -1 ? fallback : (args[index + 1] ?? fallback)
 }
 const checkOnly = args.includes('--check')
+const force = args.includes('--force')
 const profileName = flag('profile', 'desktop')
 const dshHome = process.env.DSH_HOME ?? join(process.env.HOME ?? '', '.dsh')
 const profileDir = join(dshHome, 'profiles', profileName)
+
+/** Kill switch: drop the plugin from a profile in one command. */
+if (args.includes('--disable')) {
+  const stampOff = Date.now()
+  copyFileSync(pkgPath, pkgPath + '.disable-' + stampOff)
+  pkg.dsh.profile.bundles = bundles.filter((name) => name !== PLUGIN)
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
+  const patchOff = /^- id: dsh-remote-host\n(?: {2,}.*\n?)+/m
+  if (patchOff.test(patchText)) {
+    copyFileSync(patchPath, patchPath + '.disable-' + stampOff)
+    writeFileSync(patchPath, patchText.replace(patchOff, ''))
+  }
+  console.log('ensure-profile: disabled ' + PLUGIN + ' in ' + profileName)
+  process.exit(0)
+}
 
 if (!existsSync(profileDir)) {
   console.error('ensure-profile: no profile at ' + profileDir)
@@ -60,6 +76,30 @@ if (repairs.includes('dependency')) {
 }
 
 const stamp = Date.now()
+
+/**
+ * Circuit breaker: a plugin that crashes the renderer must not be re-registered by this
+ * script, or the repair itself creates a crash loop. Two renderer crash reports inside
+ * 30 minutes mean "leave it out and say so".
+ */
+function recentRendererCrashes() {
+  const dir = join(process.env.HOME ?? '', 'Library/Logs/DiagnosticReports')
+  try {
+    return readdirSync(dir).filter((name) => /Harness.*Renderer.*\.ips$/.test(name)).filter((name) => {
+      const at = /(\d{4}-\d{2}-\d{2}-(\d{2})(\d{2})(\d{2}))/.exec(name)
+      if (at === null) return false
+      const when = new Date(at[1].slice(0, 10) + 'T' + at[2] + ':' + at[3] + ':' + at[4]).getTime()
+      return Date.now() - when < 30 * 60 * 1000
+    }).length
+  } catch (error) { return 0 }
+}
+const crashes = recentRendererCrashes()
+if (crashes >= 2 && checkOnly !== true) {
+  console.error('ensure-profile: ' + crashes + ' renderer crashes in the last 30 minutes; leaving ' + PLUGIN + ' unregistered')
+  console.error('ensure-profile: re-run with --force once the cause is fixed')
+  process.exit(3)
+}
+
 /** The row this plugin used last, recovered from the newest backup that has one. */
 function recoverRow() {
   const backups = readdirSync(profileDir)

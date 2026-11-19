@@ -38,7 +38,14 @@
   /** 'single' folds every remote Workspace into one group under this label. */
   var GROUP_MODE = config.group === 'workspace' ? 'workspace' : 'single'
   var GROUP_ID = 'dsh-remote-host:devbox'
-  var GROUP_LABEL = typeof config.label === 'string' && config.label.length > 0 ? config.label : 'devbox'
+  /** Short name used for the merged workspace path. */
+  var GROUP_PATH = typeof config.label === 'string' && config.label.length > 0 ? config.label : 'devbox'
+  /**
+   * Title shown on the merged group. Keeping the remote sessions in one *native* group
+   * (with a section-like title) preserves every shipped row behaviour — pin, archive,
+   * search, drag, context menu — because the rows are the shipped rows.
+   */
+  var GROUP_LABEL = '远端工作区 · ' + GROUP_PATH
   /** Router currently owning the mux socket, so group merges can be refreshed. */
   var activeRouter
   /** Remote session id -> its Workspace title, for row labels inside the group. */
