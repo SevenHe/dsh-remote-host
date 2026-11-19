@@ -54,6 +54,25 @@ index you can still install from a checkout:
 dsh plugin --profile <name> add /path/to/dsh-remote-host
 ```
 
+### Sidebar capabilities
+
+The opt-in two-section sidebar (`sidebar: sections`) adds a remote section next to the
+local one, and keeps the native behaviours working for **both**:
+
+| capability | how |
+|---|---|
+| pin / unpin | row action → `ctx.uiWorkspace.pinSession/unpinSession` |
+| archive / unarchive | row action → `ctx.uiWorkspace.archiveSession/unarchiveSession`; archived rows live behind the 已归档 toggle |
+| open session | `ctx.uiWorkspace.openSession` |
+| search | the input above the list filters both sections by title |
+| pinned ordering | pinned sessions float into a 置顶 group at the top of their section |
+
+None of these reimplement anything: they call the same client services the shipped
+sidebar uses, so local sessions behave exactly as before. For remote sessions the shim
+forwards the same RPC to the mounted host (its routing rule is "payload mentions a remote
+session id"), and the remote's pinned/archived state returns through the merged workspace
+stream — so a remote session pins and archives on the remote, persistently.
+
 ### Source layout
 
 The browser shim is injected as one classic script inside a single IIFE, so its modules
