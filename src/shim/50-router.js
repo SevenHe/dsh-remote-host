@@ -4,6 +4,54 @@
  * forwarding, local<->remote fallbacks, and merged workspace/event streams.
  */
   /**
+   * A Session the mounted Host created must reach the remote block, never the shipped
+   * list. The shipped client materializes a list row from the forwarded
+   * `api-session/added` emit (`session-controller`'s `ctx.remote.$on` relay), and with
+   * `group: none` no remote Workspace is published to claim that row, so it would show
+   * up in the shipped "Ungrouped" bucket. Re-read the mounted Host's list instead: the
+   * block renders from the published snapshot and the routing table learns the id.
+   */
+  var remoteSessionsRefresh
+
+  function scheduleRemoteSessionsRefresh() {
+    if (remoteSessionsRefresh !== undefined) return
+    if (typeof globalThis.setTimeout !== 'function') {
+      refreshRemoteSessions()
+      return
+    }
+    remoteSessionsRefresh = globalThis.setTimeout(function () {
+      remoteSessionsRefresh = undefined
+      refreshRemoteSessions()
+    }, 250)
+  }
+
+  function refreshRemoteSessions() {
+    try {
+      globalThis.fetch(MOUNT + '/api/session/list', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'client-request',
+          rpcId: nextRpcId(),
+          method: 'session/list',
+          payload: { args: { _request: {} } },
+        }),
+      }).then(function (response) { return response.json() }).then(function (envelope) {
+        var result = envelope === null || typeof envelope !== 'object' ? undefined : envelope.result
+        var value = result === null || typeof result !== 'object' || result.ok !== true ? undefined : result.value
+        var items = value === undefined || value === null ? undefined : value.items
+        if (Array.isArray(items) !== true) return
+        for (var index = 0; index < items.length; index += 1) {
+          if (isActiveRemote(items[index]) === true) remoteSessions.add(items[index].sessionId)
+        }
+        publishRemoteSessions(items)
+        publishRemoteState()
+        refreshGroups()
+      }).catch(function (error) { note('sessions-refresh-failed', { error: String(error).slice(0, 90) }) })
+    } catch (error) { /* the next event or the client's own list retries */ }
+  }
+
+  /**
    * Multiplex one client mux socket onto up to two upstream mux sockets: the
    * local Host and the mounted remote Host.
    */
@@ -239,6 +287,15 @@
               return
             }
             rememberRemoteEvent(value.eventId)
+          }
+          // With 'group: none' the shipped list carries no remote Session and no remote
+          // Workspace claims one, so the row the shipped client builds from this emit
+          // lands in the shipped "Ungrouped" bucket. The remote block owns those Sessions;
+          // refresh its published snapshot instead of growing the shipped list.
+          if (GROUP_MODE === 'none' && value.type === 'emit' && value.event === 'api-session/added') {
+            note('events-skip-remote-added', { count: 1 })
+            scheduleRemoteSessionsRefresh()
+            return
           }
         }
         var events = {}
