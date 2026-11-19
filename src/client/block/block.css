@@ -1124,6 +1124,244 @@
 }
 @keyframes drh-spin { to { transform: rotate(360deg); } }
 
+/* ------------------------------------------------------------------ *
+ * Ported popover surface + menu atoms (upstream ui-primitives, classes
+ * 1w4el/70kcw). Class names carry the drh- prefix; every visual value is
+ * the upstream token, never a literal colour.
+ * ------------------------------------------------------------------ */
+.drh-menuSurface {
+  position: fixed;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  box-sizing: border-box;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--dsw-radius-lg);
+  /* The shipped card's elevation, read off the live menu surface: --dsw-elevation-prominent
+   * resolves to this on the shipped surface (#ffffff29 hairline plus two black layers).
+   * Kept literal because the token chain resolves differently outside the shipped menu. */
+  box-shadow: 0 0 0 0.5px #ffffff29, 0 3px 8px 0 #0000000a, 0 0 20px 0 #0000000d;
+  anchor-name: --drh-menu-anchor;
+  z-index: 1100;
+}
+
+/* The frosted layer: absolute inside the card, behind its content. The card
+ * itself stays transparent, which is why an opaque colour on the container
+ * produced a white window. */
+.drh-menuMaterial {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--dsw-menu-surface-fill);
+  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  pointer-events: none;
+}
+
+/* Chromium needs opaque pixels behind the page to blur it over native vibrancy. */
+.drh-menuBacking {
+  display: none;
+}
+html[data-platform='darwin'] .drh-menuBacking {
+  display: block;
+  position: fixed;
+  position-anchor: --drh-menu-anchor;
+  top: anchor(top);
+  left: anchor(left);
+  width: anchor-size(width, 0px);
+  height: anchor-size(height, 0px);
+  z-index: -1;
+  background: var(--dsw-alias-bg-base);
+  pointer-events: none;
+}
+
+.drh-menuSurface[data-menu-phase='enter'] > * { animation: drh-menu-in var(--dsh-menu-enter) ease-out; }
+.drh-menuSurface[data-menu-phase='dismiss'] > * { animation: drh-menu-out var(--dsh-menu-dismiss) ease-in both; }
+@keyframes drh-menu-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes drh-menu-out { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .drh-menuSurface[data-menu-phase] > * { animation-duration: 0ms; }
+}
+
+.drh-menuViewport {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.drh-menuLabel {
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.drh-menuItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--dsw-radius-md);
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+}
+
+/* The view-options menu is the dense variant: 30px rows, 4px block padding. */
+.drh-menuDense .drh-menuItem { min-height: 30px; padding-block: 4px; }
+.drh-menuDense .drh-menuLabel { padding-block: 3px; }
+
+@media (hover: hover) {
+  .drh-menuItem:hover:not(:disabled):not([aria-disabled='true']) {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+
+/* Arrow navigation moves real focus; the fill is the row's focus indication. */
+.drh-menuItem:focus-visible:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  outline: none;
+}
+
+.drh-menuItem:disabled,
+.drh-menuItem[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.drh-menuIcon {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-menu-icon);
+}
+.drh-menuIcon svg,
+.drh-menuCheck {
+  width: 14px;
+  height: 14px;
+}
+
+.drh-menuText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drh-menuShortcut {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* Selection marker: a trailing check glyph, not a fill (upstream _check). */
+.drh-menuCheck {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-primary);
+}
+
+.drh-menuSeparator {
+  height: 0.5px;
+  margin: 3px 8px;
+  background: var(--dsw-alias-border-l2);
+}
+
+/* ------------------------------------------------------------------ *
+ * Ported hover card shell (upstream HoverCard.module.css, class l6gf9).
+ * ------------------------------------------------------------------ */
+.drh-hoverCard {
+  position: fixed;
+  z-index: 2147482000;
+  box-sizing: border-box;
+  width: 244px;
+  padding: 12px 16px;
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-hovercard-bg);
+  box-shadow: var(--dsw-shadow-lv3);
+  cursor: pointer;
+}
+
+/* State dot: 10px slot painting a 6px currentColor core, like StateDot. */
+.drh-hoverDot {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  /* Measured: --dsw-alias-state-idle-primary resolves to nothing in this page scope, so
+   * the shipped idle core colour is used literally (native idle dot = rgb(84, 85, 87)). */
+  color: rgb(84, 85, 87);
+}
+.drh-hoverDot::after {
+  content: '';
+  position: absolute;
+  inset: 20%;
+  border-radius: 50%;
+  background: currentColor;
+}
+.drh-hoverDot[data-state='running'] { color: #2ea043; }
+
+/* Rename dialog rows and the tree indent (not part of the shipped menu atoms). */
+.drh-menuInput {
+  width: 100%;
+  box-sizing: border-box;
+  height: 30px;
+  margin: 2px 0 4px;
+  padding: 0 8px;
+  border-radius: var(--dsw-radius-sm);
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.drh-menuButtons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 2px 0 0;
+}
+
+.drh-menuButton {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--dsw-radius-sm);
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.drh-menuButtonPrimary {
+  background: var(--dsw-alias-state-business-primary);
+  border-color: transparent;
+  color: var(--dsw-alias-label-on-primary, #fff);
+}
+
+/* Tree grouping: one indent step under each section. */
+.drh-treeIndent {
+  padding-left: 12px;
+}
+
 /* Local addition (not upstream): the ported sheet folds the shipped header control (28px box,
    16px glyph) and the shipped row/group action (24px box, 14px glyph, 4px radius, compensated
    -4px margins) onto one .drh-iconButton rule. The row variant is spelled out here so the
