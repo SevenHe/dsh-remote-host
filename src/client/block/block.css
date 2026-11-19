@@ -958,13 +958,13 @@
 
   .drh-sessionRow:hover .drh-rowActions,
   .drh-sessionRow.menuOpen .drh-rowActions,
-  :global(html[data-input-modality='keyboard']) .drh-sessionRow:focus-within .drh-rowActions {
+  html[data-input-modality='keyboard'] .drh-sessionRow:focus-within .drh-rowActions {
     display: inline-flex;
   }
 
   .drh-sessionRow:hover .drh-rowResting,
   .drh-sessionRow.menuOpen .drh-rowResting,
-  :global(html[data-input-modality='keyboard']) .drh-sessionRow:focus-within .drh-rowResting {
+  html[data-input-modality='keyboard'] .drh-sessionRow:focus-within .drh-rowResting {
     display: none;
   }
 
@@ -984,7 +984,7 @@
   /* Only update timestamps disappear; pending-interaction labels remain visible. */
   .drh-sessionRow .drh-timestamp,
   .drh-sessionRow:has(.drh-pinnedAction) .drh-pinIndicator,
-  .drh-sessionRow .drh-rowQuickActions > :global([data-slot]) > :not(.drh-pinnedAction),
+  .drh-sessionRow .drh-rowQuickActions > [data-slot] > :not(.drh-pinnedAction),
   .drh-projectRow[aria-expanded='false'] .drh-rowActions {
     display: none;
   }
@@ -1086,39 +1086,6 @@
   margin: 0 -4px;
 }
 
-/* Compensated margins keep the 24px target on the compact icon's center. */
-.drh-iconButton {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  margin: -4px;
-  border: none;
-  border-radius: var(--dsw-radius-xs);
-  padding: 0;
-  background: transparent;
-  cursor: pointer;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.drh-iconButton > svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* Keep the focus ring on its original compact outline. */
-.drh-iconButton:focus-visible {
-  outline-offset: -2px;
-}
-
-@media (hover: hover) {
-  .drh-iconButton:hover {
-    color: var(--dsw-alias-label-primary);
-  }
-}
-
 /* Chevrons ride the caption grey (#ADB2B8); the folder glyph stays one step
    darker (tertiary, #81858C) per the cell spec. */
 .drh-chevron {
@@ -1157,11 +1124,4 @@
 }
 @keyframes drh-spin { to { transform: rotate(360deg); } }
 
-/* Local addition (not upstream): this header carries three controls — sort, new remote
-   workspace, expand/collapse — while the ported cluster caps at 60px (two). Widen the
-   cluster for the visible state only, so the collapsed state still yields to the search. */
-#drh-remote-block .drh-headerActions:not(.drh-headerActionsHidden) {
-  max-width: none;
-  overflow: visible;
-}
 
