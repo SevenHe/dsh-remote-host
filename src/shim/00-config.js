@@ -37,9 +37,9 @@
   var SUPERAGENT_REMOTE = config.superagent === 'remote'
   /** 'single' folds every remote Workspace into one group under this label. */
   var GROUP_MODE = config.group === 'workspace' ? 'workspace' : 'single'
-  var GROUP_ID = 'dsh-remote-host:devbox'
+  var GROUP_ID = 'drh:devbox'
   /** Prefix that marks a merged remote workspace row (used by the section stylesheet). */
-  var REMOTE_WORKSPACE_PREFIX = 'dsh-remote-host:'
+  var REMOTE_WORKSPACE_PREFIX = 'drh:'
 
   /** Short name used for the merged workspace path. */
   var GROUP_PATH = typeof config.label === 'string' && config.label.length > 0 ? config.label : 'devbox'
@@ -62,7 +62,7 @@
   function announce(name, detail) {
     try {
       if (typeof document !== 'object' || document === null || typeof CustomEvent !== 'function') return
-      document.dispatchEvent(new CustomEvent('dsh-remote-host:' + name, { detail: detail }))
+      document.dispatchEvent(new CustomEvent('drh:' + name, { detail: detail }))
     } catch (error) { /* the page may not accept events yet */ }
   }
 

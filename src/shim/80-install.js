@@ -16,7 +16,7 @@
     try {
       var rev = typeof config.rev === 'string' ? config.rev : undefined
       if (rev === undefined || typeof document !== 'object' || typeof document.addEventListener !== 'function') return
-      var KEY = 'dsh-remote-host:self-update'
+      var KEY = 'drh:self-update'
       var read = function () {
         try {
           if (globalThis.sessionStorage === undefined || globalThis.sessionStorage === null) return undefined
