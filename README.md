@@ -75,6 +75,27 @@ node scripts/install-selfheal.mjs --uninstall
 be executed as node without `ELECTRON_RUN_AS_NODE`. The agent logs to
 `~/Library/Logs/dsh-remote-host-ensure.log`.
 
+### Why the shipped list is not replaced
+
+The platform exposes these sidebar slots (measured in the running app):
+
+```
+sidebar                              sidebar.panellist
+sidebar.workspaces                   sidebar.session.action
+sidebar.workspaces.directoryFlow     sidebar.session.row.leading / .trailing
+sidebar.workspaces.session.row.action
+```
+
+`sidebar.workspaces` is the **whole block** — its header carries the shipped search, filter
+and new-workspace controls — and there is no slot for the list body alone. Replacing it
+therefore costs those controls; the per-row slots (`row.leading`, `row.trailing`,
+`row.action`) exist for additive changes only.
+
+So the plugin never replaces the list. Remote workspaces are merged as one shipped group
+titled `远端工作区 · <label>`, an optional `sectionHeaders` stylesheet draws a divider
+above it, and every row behaviour (pin, archive, search, drag, context menu, expander) is
+the shipped implementation.
+
 ### Sidebar: native by default
 
 The supported configuration leaves the shipped sidebar alone. The shim merges the
