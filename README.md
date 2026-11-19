@@ -75,7 +75,39 @@ node scripts/install-selfheal.mjs --uninstall
 be executed as node without `ELECTRON_RUN_AS_NODE`. The agent logs to
 `~/Library/Logs/dsh-remote-host-ensure.log`.
 
-### Sidebar capabilities
+### Sidebar: native by default
+
+The supported configuration leaves the shipped sidebar alone. The shim merges the
+mounted host's workspaces into it as **one native group** titled
+`远端工作区 · <label>`, so remote sessions are shipped rows:
+
+- pin, archive, search, drag, context menu and keyboard behaviour are the app's own,
+  because nothing re-implements them;
+- the plugin's client half does nothing at all in this mode (it returns before touching
+  a slot), so no rendering code of ours runs in the renderer.
+
+```yaml
+- id: dsh-remote-host
+  config:
+    upstream: http://devbox.example.com:3080
+    authority: devbox.example.com:3080
+    mount: /devbox
+    label: devbox        # the group reads "远端工作区 · devbox"
+    streams: true
+    superagent: remote
+```
+
+#### `sidebar: sections` is experimental
+
+An earlier design replaced `sidebar.workspaces` with a two-section list. It works
+functionally (pin, archive, search and open reuse the shipped services and the shipped
+sprite icons) but it has **crashed the renderer** with `EXC_BREAKPOINT` in V8 more than
+once, with no reproducible trigger from outside the app. It stays available behind
+`sidebar: sections` for experimentation and must not be enabled in a profile you rely
+on. Everything below about pin/archive/search applies to the shipped rows in native
+mode, which needs none of it.
+
+### Sidebar capabilities (experimental sections mode)
 
 The opt-in two-section sidebar (`sidebar: sections`) adds a remote section next to the
 local one, and keeps the native behaviours working for **both**:
