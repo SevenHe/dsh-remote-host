@@ -49,7 +49,8 @@
   },
   "scripts": {
     "build:shim": "node scripts/build-shim.mjs",
-    "check": "node scripts/build-shim.mjs --check && node --check lib/index.js && node --check lib/client.js && node scripts/verify-manifest.mjs && node scripts/verify-index.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node scripts/build-shim.mjs --check && node --check lib/index.js && node --check lib/client.js && node scripts/verify-manifest.mjs && node scripts/verify-index.mjs && npm test",
     "ensure-profile": "node scripts/ensure-profile.mjs",
     "install-selfheal": "node scripts/install-selfheal.mjs"
   }
