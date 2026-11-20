@@ -30,11 +30,11 @@ async function listMerge(options = {}) {
   return { page, items: body.result.value.items }
 }
 
-test('session/list none: remote rows are listed so the client catalog can retain them', async () => {
+test('session/list none: the shipped list carries local rows only', async () => {
   const { items } = await listMerge({ config: { group: 'none' }, localItems: LOCAL_ITEMS, remoteItems: [remoteRow()] })
-  // The catalog needs the id before sessions.retain accepts it; leaking into the shipped
-  // Ungrouped bucket is prevented by the hidden claiming Workspace (group-modes.test.mjs).
-  assert.deepEqual(items.map((item) => item.sessionId), [LOCAL_SESSION, REMOTE_SESSION])
+  // The block fills the client catalog per open (inject, open, remove), so a remote row
+  // must never ride along in the shipped list, where it would add a stray expand row.
+  assert.deepEqual(items.map((item) => item.sessionId), [LOCAL_SESSION])
 })
 
 test('session/list single: local rows first, then the visible remote ones', async () => {
