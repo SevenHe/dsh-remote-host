@@ -1,7 +1,7 @@
 # dsh-remote-host
 
 > **UI 对齐规范**：[`docs/ui-parity.md`](docs/ui-parity.md)（入口 / 测量姿势 / token 与原子 / 基线表 / 陷阱 / checklist）
-> · 回归清单 [`docs/regression.md`](docs/regression.md) · 兼容矩阵 [`docs/compatibility.md`](docs/compatibility.md)
+> · 回归清单 [`docs/regression.md`](docs/regression.md) · 兼容矩阵 [`docs/compatibility.md`](docs/compatibility.md) · 崩溃排查 [`docs/crash-triage.md`](docs/crash-triage.md)
 
 ## Contributing and CI
 
