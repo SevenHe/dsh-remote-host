@@ -136,9 +136,9 @@
     try { publishRemoteSessions(remoteItems) } catch (error) { /* publishing is best effort */ }
     var value = {}
     for (var key in localBody.result.value) { if (Object.prototype.hasOwnProperty.call(localBody.result.value, key)) value[key] = localBody.result.value[key] }
-    // The shipped list stays local-only: the client catalog is filled per open by the
-    // block (inject, open, remove), so remote rows never enter the shipped tree.
-    value.items = GROUP_MODE === 'none' ? localItems : merged
+    // The remote rows always ride along: they are the client catalog's only source for a
+    // remote id, and the claiming Workspace keeps them out of the shipped Ungrouped bucket.
+    value.items = merged
     note('list-merge', { local: localItems.length, remote: remoteItems.length, visible: merged.length - localItems.length })
     publishRemoteState()
     refreshGroups()

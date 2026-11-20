@@ -68,11 +68,26 @@ async function mergeWorkspaceFollow({ group, remoteItems = REMOTE_ITEMS, remoteS
   return { page, merged: baselines[0].value.value }
 }
 
-test('group none: no remote workspace reaches the shipped baseline', async () => {
+test('group none: exactly one hidden claiming workspace covers every remote session', async () => {
   const { merged } = await mergeWorkspaceFollow({ group: 'none' })
-  assert.deepEqual(merged.items.map((item) => item.workspaceId), ['local-ws'])
-  assert.deepEqual(merged.items[0].sessionIds, [LOCAL_SESSION])
+  assert.deepEqual(merged.items.map((item) => item.workspaceId), ['local-ws', 'drh:claim'])
+  assert.deepEqual(merged.items[0].sessionIds, [LOCAL_SESSION], 'the local workspace is untouched')
+  const claim = merged.items[1]
+  assert.equal(claim.title, '远端工作区 · devbox', 'the claim carries the block label')
+  assert.deepEqual(claim.sessionIds, [REMOTE_SESSION], 'every visible remote session is claimed')
 })
+
+test('group none: no remote session is left unclaimed (Ungrouped guard)', async () => {
+  const { merged } = await mergeWorkspaceFollow({ group: 'none', remoteItems: [
+    { sessionId: REMOTE_SESSION, updatedAt: NOW, running: true },
+    { sessionId: 'worker-2', updatedAt: NOW, running: false },
+  ] })
+  const claimed = new Set()
+  for (const item of merged.items) for (const id of item.sessionIds) claimed.add(id)
+  const published = ['worker-1', 'worker-2']
+  assert.deepEqual(published.filter((id) => !claimed.has(id)), [], 'no published remote session is unclaimed')
+})
+
 test('group none: remote archive/pin marks are not folded in', async () => {
   const { merged } = await mergeWorkspaceFollow({
     group: 'none',
