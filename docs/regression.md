@@ -183,3 +183,5 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 
   **适用条件**：需要能连到该 lab 的 CDP 页面（`--port <lab> --cdp <cdp>`），需要 profile 上 `remoteBlock: true`，且 lab 已挂载远端（启动日志有 `mounted ... at /devbox`）。菜单/悬停类字段需要真实鼠标事件，headless 下同样成立。
 - `scripts/lab-block.sh`：可用；但它只起 `dsh web` 服务 + 复制 profile，浏览器侧要自己起（见脚本注释）。
+
+| B-26 | 会话行动作按钮用**不变量**判定：步进 29px、盒 24×24、最右按钮距行右边缘 7px（绝对 x 会随滚动条平移） | 读 parity-snapshot 的 sessionRow.actions + actionsRightInset | 按绝对 x 判定导致的假阳性/假阴性 |
