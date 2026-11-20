@@ -30,11 +30,11 @@ async function listMerge(options = {}) {
   return { page, items: body.result.value.items }
 }
 
-test('session/list none: the shipped list carries local rows only', async () => {
+test('session/list none: remote rows are listed so the client catalog can retain them', async () => {
   const { items } = await listMerge({ config: { group: 'none' }, localItems: LOCAL_ITEMS, remoteItems: [remoteRow()] })
-  assert.deepEqual(items.map((item) => item.sessionId), [LOCAL_SESSION])
-  // Reverse case: a live remote session is exactly the input that used to leak.
-  assert.equal(items.some((item) => item.sessionId === REMOTE_SESSION), false)
+  // The catalog needs the id before sessions.retain accepts it; leaking into the shipped
+  // Ungrouped bucket is prevented by the hidden claiming Workspace (group-modes.test.mjs).
+  assert.deepEqual(items.map((item) => item.sessionId), [LOCAL_SESSION, REMOTE_SESSION])
 })
 
 test('session/list single: local rows first, then the visible remote ones', async () => {
