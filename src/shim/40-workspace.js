@@ -135,10 +135,37 @@
     } catch (error) { /* publishing is best effort */ }
   }
 
+  /**
+   * Hidden claiming Workspace for the modes that fold no remote record into the shipped tree.
+   *
+   * The client catalog is fed by session/list, so a remote id has to be listed for
+   * sessions.retain to accept it. One synthetic Workspace claims every visible remote
+   * Session so the shipped tree can never place them in its Ungrouped bucket; the block
+   * stylesheet hides its row, so the user sees no extra group.
+   */
+  function claimRemoteSide() {
+    var ids = []
+    remoteSessions.forEach(function (id) { ids.push(id) })
+    if (ids.length === 0) return { items: [], archivedSessionIds: [], pinnedSessionIds: [] }
+    var now = new Date().toISOString()
+    return {
+      items: [{
+        workspaceId: REMOTE_WORKSPACE_PREFIX + 'claim',
+        path: GROUP_PATH,
+        title: GROUP_LABEL,
+        sessionIds: ids,
+        createdAt: now,
+        updatedAt: now,
+      }],
+      archivedSessionIds: [],
+      pinnedSessionIds: [],
+    }
+  }
+
   function mergeBaseline(local, remote) {
     publishRemoteMarks(remote)
     var kept = GROUP_MODE === 'none'
-      ? { items: [], archivedSessionIds: [], pinnedSessionIds: [] }
+      ? claimRemoteSide()
       : (GROUP_MODE === 'single' ? collapseRemoteSide(remote) : pruneRemoteSide(remote))
     return {
       items: local.items.concat(kept.items),
