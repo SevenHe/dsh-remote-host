@@ -1421,14 +1421,6 @@ html[data-platform='darwin'] .drh-menuBacking {
   outline: none;
 }
 
-/* Add-workspace panel on the popup surface: same frosted card, laid out as a form. */
-.drh-panelSurface {
-  width: 272px;
-  padding: 10px;
-  font-size: 13px;
-  color: var(--dsw-alias-label-primary);
-}
-
 /* Block feedback toast on the same surface, pinned bottom-left above the page. */
 .drh-toastSurface {
   top: auto;
@@ -1460,3 +1452,163 @@ html[data-platform='darwin'] .drh-menuBacking {
 [data-row-key^='overflow:drh:'] {
   display: none !important;
 }
+/* ------------------------------------------------------------------ *
+ * Add-workspace dialog (ported from the shipped modal atoms, class
+ * 1ytzq). The reference is the shipped workspace-rename dialog measured
+ * in the lab: centered masked modal, 380px wide, radius 28px,
+ * background --dsw-alias-bg-layer-2, elevation --dsw-elevation-prominent,
+ * header 22/14/12/24, 44px input, 36px footer buttons. Values and their
+ * provenance are recorded in docs/ui-parity.md section 4.
+ * ------------------------------------------------------------------ */
+.drh-dialogRoot {
+  pointer-events: auto;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(24px, var(--dsh-frame-overlay-top, 24px)) 24px;
+}
+
+/* The shipped mask blurs the page instead of tinting it. */
+.drh-dialogMask {
+  position: absolute;
+  inset: var(--dsh-frame-chrome-top, 0px) 0 0;
+  backdrop-filter: var(--dsw-mask-blur);
+}
+
+.drh-dialog {
+  box-sizing: border-box;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: min(380px, 100%);
+  padding: 0 0 24px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--dsw-radius-panel, 28px);
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-elevation-prominent);
+  color: var(--dsw-alias-label-primary);
+  animation: drh-dialog-in var(--ds-transition-duration, 150ms) var(--ds-ease-in-out);
+}
+
+@keyframes drh-dialog-in {
+  from { opacity: 0; transform: scale(0.98); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drh-dialog { animation-duration: 0ms; }
+}
+
+.drh-dialogHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 22px 14px 12px 24px;
+}
+
+.drh-dialogTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.drh-dialogClose {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+}
+
+@media (hover: hover) {
+  .drh-dialogClose:hover { background: var(--dsw-alias-interactive-bg-hover); }
+}
+
+.drh-dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 0;
+  padding: 0 24px;
+}
+
+/* Shipped field: 44px box, 16px radius, hairline border, 14/22 text. */
+.drh-dialogInput {
+  box-sizing: border-box;
+  width: 100%;
+  height: 44px;
+  padding: 7px 14px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.16));
+  border-radius: var(--dsw-radius-lg, 16px);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+  outline: none;
+}
+
+.drh-dialogInput::placeholder { color: var(--dsw-alias-label-tertiary); }
+
+.drh-dialogInput:focus {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.drh-dialogHint {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.drh-dialogFooter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 24px;
+}
+
+/* Shipped footer buttons: 36px tall, 12px radius, 0 14px padding. */
+.drh-dialogButton {
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--dsw-radius-md, 12px);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .drh-dialogButton:hover { background: var(--dsw-alias-interactive-bg-hover); }
+}
+
+/* The shipped primary is inverted (label colour as fill, layer colour as text). */
+.drh-dialogButtonPrimary {
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-layer-2);
+}
+
+@media (hover: hover) {
+  .drh-dialogButtonPrimary:hover { background: var(--dsw-alias-label-primary); opacity: 0.88; }
+}
+
