@@ -76,7 +76,7 @@
   box-sizing: border-box;
   border-radius: var(--dsw-radius-md);
   overflow: hidden;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-secondary);
 }
 
 .drh-root:not(.drh-rail) .drh-sectionHeader.searchSpacingMotion {
