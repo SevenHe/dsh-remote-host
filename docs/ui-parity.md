@@ -725,3 +725,31 @@ grep -n ", #fff)\|elevated, #fff" src/client/block/block.css || echo "ok: no whi
 3. **不要向 root 的 `sessions.manager` 注入目录行**。`openSession → replaceMain → sessions.retain` 用的是某个具体 scope 的 manager，注入 root 不生效（实测报 `unknown session`）。另外 `SessionSummary` **没有** `workspaceId` 字段，分桶靠 `workspace.sessionIds` 的成员关系——想「按字段归桶」这条路不存在。
 4. **诊断序列化有字段上限**。我们的 trace detail 只保留前 6 个键，心跳有 7 个计数时第 7 个被静默丢弃（表现为「明明加了计数，日志里只有前几个」）。写埋点时用**扁平标量**并核对上限。
 5. **「数值相同」不等于「观感相同」**。菜单材质、阴影、字号全部逐项相等，但菜单左对齐 vs 右对齐会让它落在不同背景上，用户看到的是「颜色不一样」。定位这类问题要**成对看 rect**（`menu.right` vs `trigger.right`），而不是只比 computed style。
+
+
+## §7 会话状态一致性约束（硬性）
+
+**任何会话行状态，必须复用本地会话行的同一套呈现；本地怎么显示，远端就怎么显示；本地没有的，远端也不许自创。**
+
+这条是踩坑后立的规矩：我们曾为了让「运行状态可见」自己加了一个空闲灰点（`rgb(84,85,87)`）+ 圆点画法，结果位置夹在标题与时间之间、浅色主题下像一个黑点，用户第一反应是「这是什么？」。正确做法是去 shipped 源码里找它本来怎么画。
+
+### 已核对的本地规则（来自 shipped `Rows.tsx`）
+
+| 状态 | 本地怎么显示 | 备注 |
+|---|---|---|
+| 运行中 | **前导槽（标题左侧）显示 loading/状态图标**（`SessionStatusDots`；非 idle 才渲染） | 不是自绘圆点，必须复用同一 sprite/组件；动画也一致 |
+| 空闲 | 前导槽**什么都不显示** | 不要为了“看得见状态”加灰点 |
+| blank（新建未发消息） | 渲染新建态（欢迎页 + 输入框），不显示前导状态 | 客户端靠 summary 的 `blank:true` 决定 |
+| 未读 | 只有「完成态绿点提醒」（completionUnread），**没有独立未读徽标** | 不要发明 unread badge |
+| 归档 | 不在默认列表；仅在归档筛选下出现 | 与本地一致 |
+| 置顶 | 置顶分区/行首 pin 图标，与本地同位置同图标 | |
+
+### 落地检查清单（加新状态前必过）
+
+1. 先在 shipped 源码里找到该状态的渲染分支与 sprite/组件名（`Rows.tsx` + `Rows.module.css`）；
+2. 复用**同一个 `data-icon` sprite id**、同一尺寸、同一位置槽（leading / trailing / resting），同一动画；
+3. 触发条件必须来自**同名字段**（如 `running`、`blank`、`primaryStatus.state`），不要用近似字段推断；
+4. 若远端数据缺该字段，先让 shim 透传（`publishRemoteSessions`），**不要在前端编造默认值**；
+5. 截图对比「本地运行行 vs 远端运行行」，要求图标 id / 尺寸 / 位置一致；
+6. 在 `docs/regression.md` 增加对应回归项（怎么验 + 失败长什么样）。
+
