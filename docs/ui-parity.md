@@ -714,3 +714,12 @@ ELECTRON_RUN_AS_NODE=1 "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSe
 grep -n ", #fff)\|elevated, #fff" src/client/block/block.css || echo "ok: no white fallbacks"
 ```
 
+
+
+## §5 补充：2026-11 又踩到的 5 个坑
+
+1. **选中态与 hover 态共用同一个 token** → 两行会同时发灰。`--dsw-alias-interactive-bg-hover` 同时被 `:hover` 和我们自维护的 `.selected` 使用；而远端会话不会让宿主的 `mainReference` 移动，所以我们只能自己记当前行——**记住就必须负责清除**（离开远端会话的所有路径：点本地行 / 新会话 / 快捷键）。
+2. **内联样式隐藏会被上游重挂载冲掉**。给原生行 `element.style.display='none'` 在 React remount 后就没了，表现为「修好了，操作一次又回来」。正解：**静态 CSS + 前缀 key**（如 `[data-row-key^='overflow:drh:']`），前缀保证只命中我们自己的桶。
+3. **不要向 root 的 `sessions.manager` 注入目录行**。`openSession → replaceMain → sessions.retain` 用的是某个具体 scope 的 manager，注入 root 不生效（实测报 `unknown session`）。另外 `SessionSummary` **没有** `workspaceId` 字段，分桶靠 `workspace.sessionIds` 的成员关系——想「按字段归桶」这条路不存在。
+4. **诊断序列化有字段上限**。我们的 trace detail 只保留前 6 个键，心跳有 7 个计数时第 7 个被静默丢弃（表现为「明明加了计数，日志里只有前几个」）。写埋点时用**扁平标量**并核对上限。
+5. **「数值相同」不等于「观感相同」**。菜单材质、阴影、字号全部逐项相等，但菜单左对齐 vs 右对齐会让它落在不同背景上，用户看到的是「颜色不一样」。定位这类问题要**成对看 rect**（`menu.right` vs `trigger.right`），而不是只比 computed style。
