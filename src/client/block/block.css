@@ -1613,8 +1613,10 @@ html[data-platform='darwin'] .drh-menuBacking {
 }
 
 
-/* The shipped row's state dot: present at rest, transparent while idle, tinted while
-   running. It rides the resting slot, so the hover action cluster replaces it. */
+/* State dot: always visible at rest, green while the Session runs and the shipped idle
+   grey otherwise. Intentional deviation from the shipped row, which leaves the dot
+   transparent while idle (see docs/ui-parity.md): a remote Session has no other place to
+   report its state. It rides the resting slot, so the hover action cluster replaces it. */
 .drh-runDot {
   display: inline-block;
   flex: none;
@@ -1622,7 +1624,7 @@ html[data-platform='darwin'] .drh-menuBacking {
   height: 6px;
   margin-right: 6px;
   border-radius: 50%;
-  background: transparent;
+  background: rgb(84, 85, 87);
 }
 
 .drh-runDot.drh-runDotOn {
