@@ -134,7 +134,7 @@ export function createPage(options = {}) {
     fetch: fetchImpl,
     WebSocket: FakeSocket,
     performance: { memory: undefined },
-    setTimeout: (fn) => { pendingTimers.push(fn); return pendingTimers.length },
+    setTimeout: (fn, delay) => { pendingTimers.push({ fn, delay: delay === undefined ? 0 : delay }); return pendingTimers.length },
     clearTimeout: () => {},
     setInterval: () => 0,
     clearInterval: () => {},
@@ -173,6 +173,7 @@ export function createPage(options = {}) {
     createWebSocket: (url) => {
       const kind = String(url).includes(config.mount) ? 'remote' : 'local'
       const socket = new FakeSocket(url, kind)
+      if (kind === 'remote' && options.remoteReadyState !== undefined) socket.readyState = options.remoteReadyState
       sockets.set(kind, socket)
       calls.sockets.push(kind)
       return socket
@@ -213,9 +214,11 @@ export function createPage(options = {}) {
     sent: (kind) => sockets.get(kind)?.sent ?? [],
     /** Frames the router sent to the client, optionally filtered. */
     frames: (predicate) => (predicate === undefined ? clientFrames : clientFrames.filter(predicate)),
+    /** Delays of the timers still pending, in scheduling order. */
+    timerDelays: () => pendingTimers.map((timer) => timer.delay),
     fireTimers() {
       const due = pendingTimers.splice(0, pendingTimers.length)
-      for (const fn of due) fn()
+      for (const timer of due) timer.fn()
     },
   }
 }

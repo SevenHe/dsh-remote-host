@@ -76,8 +76,13 @@
   /** Record and publish one leg's state: 'connecting' | 'open' | 'error'. */
   function publishStatus(kind, state) {
     try {
+      // A retry loop republishes the same state; only a real transition is news.
+      // Announcing every attempt drove a synchronous repaint per retry attempt.
+      var current = globalThis.__DSH_REMOTE_HOST_STATUS__
+      var unchanged = legStatus[kind] === state && current !== null && current !== undefined && current[kind] === state
       legStatus[kind] = state
       globalThis.__DSH_REMOTE_HOST_STATUS__ = { remote: legStatus.remote, local: legStatus.local }
+      if (unchanged === true) return
       announce('status', globalThis.__DSH_REMOTE_HOST_STATUS__)
     } catch (error) { /* status is advisory */ }
   }
