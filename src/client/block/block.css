@@ -1451,3 +1451,12 @@ html[data-platform='darwin'] .drh-menuBacking {
 [data-row-key='workspace:drh:claim'] {
   display: none !important;
 }
+
+/* The claim bucket exists only so the client catalog can retain remote ids. Its own overflow
+   row counts the remote rows the block hides, which surfaced as a second "expand the
+   remaining N" line under the local workspace. Keyed by the claim prefix, so the local
+   bucket's own overflow row is never touched; a static rule survives the shipped tree's
+   remounts, unlike an inline style. */
+[data-row-key^='overflow:drh:'] {
+  display: none !important;
+}
