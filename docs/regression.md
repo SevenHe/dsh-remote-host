@@ -185,3 +185,7 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 - `scripts/lab-block.sh`：可用；但它只起 `dsh web` 服务 + 复制 profile，浏览器侧要自己起（见脚本注释）。
 
 | B-26 | 会话行动作按钮用**不变量**判定：步进 29px、盒 24×24、最右按钮距行右边缘 7px（绝对 x 会随滚动条平移） | 读 parity-snapshot 的 sessionRow.actions + actionsRightInset | 按绝对 x 判定导致的假阳性/假阴性 |
+| B-26 | 远端会话状态**自动刷新**（不点击），≤5 秒 | 让一条远端会话 running false→true 且不做任何点击：8 秒内该行应出现 `.drh-stateDot`；true→false 应消失；改 `updatedAt` 后行尾时间文本应变化 | 必须点一下才更新；状态一直不变 |
+| B-27 | 页面 hidden 时**不轮询** | CDP `Page.setWebLifecycleState` 置 frozen 后统计 Network 中 `devbox/api/session/list` 请求数不再增长，恢复后恢复增长 | hidden 期间仍每 4 秒发请求 |
+| B-28 | 数据持续变化时**不抖动** | 每 5 秒改一次某会话 running/updatedAt，采 60 秒：announce 随变化增长，但 DOM 节点数与 heap 平稳 | 每次 tick 整块重绘，节点数/内存持续上涨 |
+| B-29 | 手动排序**不被周期刷新改写** | 切「手动排序」并拖拽（或写 `localStorage["drh:order"]`），让轮询跑 60 秒，前后组顺序数组应完全相同 | 刷新后组顺序被活跃度重排 |
