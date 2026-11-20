@@ -1420,3 +1420,27 @@ html[data-platform='darwin'] .drh-menuBacking {
   background: var(--dsw-alias-interactive-bg-hover-danger);
   outline: none;
 }
+
+/* Add-workspace panel on the popup surface: same frosted card, laid out as a form. */
+.drh-panelSurface {
+  width: 272px;
+  padding: 10px;
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Block feedback toast on the same surface, pinned bottom-left above the page. */
+.drh-toastSurface {
+  top: auto;
+  left: 16px;
+  bottom: 16px;
+  z-index: 2147483001;
+  max-width: 440px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.drh-toastError { color: var(--dsw-alias-label-primary); }
+.drh-toastText { position: relative; }
+
+.drh-menuInput { background: transparent !important; }
