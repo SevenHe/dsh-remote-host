@@ -1444,3 +1444,10 @@ html[data-platform='darwin'] .drh-menuBacking {
 .drh-toastText { position: relative; }
 
 .drh-menuInput { background: transparent !important; }
+
+/* The claiming Workspace exists only so the client catalog accepts remote ids (and the
+   shipped tree never files them under Ungrouped). It is not a user-facing group: hiding the
+   row costs no layout, cannot be expanded and takes no focus. */
+[data-row-key='workspace:drh:claim'] {
+  display: none !important;
+}
