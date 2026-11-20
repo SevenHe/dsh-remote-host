@@ -1632,6 +1632,9 @@ html[data-platform='darwin'] .drh-menuBacking {
   color: var(--dsw-alias-label-tertiary, #81858c);
 }
 .drh-stateDotSvg {
+  display: block;
+}
+.drh-stateDotMotion {
   transform-origin: center center;
   animation: 1.5s linear 0s infinite normal none running drh-state-dot-spin;
 }
@@ -1665,11 +1668,11 @@ html[data-platform='darwin'] .drh-menuBacking {
   }
   100% {
     stroke-dasharray: 12, 150;
-    stroke-dashoffset: -24;
+    stroke-dashoffset: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .drh-stateDotSvg,
+  .drh-stateDotMotion,
   .drh-stateDotArc {
     animation: none;
   }
