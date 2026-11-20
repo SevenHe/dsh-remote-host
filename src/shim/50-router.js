@@ -77,10 +77,18 @@
     var shuttingDown = false
     /** Consecutive failed reconnects, for backoff and the error status. */
     var reconnectAttempts = 0
+    /** The one pending reconnect timer, so overlapping handlers cannot stack loops. */
+    var reconnectTimer
+    /** True while a reconnect is scheduled or being attempted. */
+    var reconnectPending = false
     var merges = new Map()
     var counter = 0
     /** Frames seen per upstream leg, for the diagnostics report. */
     var relays = {}
+
+    /** First reconnect delay and its ceiling; see reconnectBackoff. */
+    var RECONNECT_BASE_MS = 200
+    var RECONNECT_CAP_MS = 10000
 
     function connect(kind) {
       var existing = upstreams.get(kind)
@@ -384,19 +392,41 @@
       note('replay-remote', { streams: remoteStreams.size })
     }
 
-    /** Reopen the remote leg after it dropped (1006), then replay its streams. */
+    /**
+     * Delay before reconnect attempt N: 200, 400, 800, ... capped at 10 s, so a
+     * long outage costs at most one attempt per cap window instead of a spin.
+     */
+    function reconnectBackoff(attempt) {
+      var step = attempt < 1 ? 1 : attempt
+      var delay = RECONNECT_BASE_MS * Math.pow(2, step - 1)
+      return delay > RECONNECT_CAP_MS ? RECONNECT_CAP_MS : delay
+    }
+
+    /**
+     * Reopen the remote leg after it dropped (1006), then replay its streams.
+     * Single flight: the close and error handlers both land here, and a socket that
+     * cannot even be constructed must wait for the next backoff step rather than
+     * re-entering this function — that recursion is what wedged the renderer.
+     */
     function reconnectRemote() {
       if (shuttingDown === true) return
+      if (reconnectPending === true) return
+      reconnectPending = true
       reconnectAttempts += 1
       if (reconnectAttempts < 3) publishStatus('remote', 'connecting')
       else publishStatus('remote', 'error')
       upstreams.delete('remote')
-      var delay = Math.min(500 * Math.pow(2, reconnectAttempts - 1), 8000)
       var attempt = function () {
-        if (shuttingDown === true) return
+        reconnectTimer = undefined
+        if (shuttingDown === true) { reconnectPending = false; return }
         var socket
         try { socket = connect('remote') } catch (error) { socket = undefined }
-        if (socket === undefined) { reconnectRemote(); return }
+        reconnectPending = false
+        if (socket === undefined) {
+          // No carrier: yield, then schedule the next step through the timer.
+          reconnectRemote()
+          return
+        }
         var onOpen = function () {
           reconnectAttempts = 0
           replayRemoteStreams()
@@ -404,7 +434,7 @@
         if (socket.readyState === 1) onOpen()
         else if (typeof socket.addEventListener === 'function') socket.addEventListener('open', onOpen)
       }
-      if (typeof setTimeout === 'function') setTimeout(attempt, delay)
+      if (typeof setTimeout === 'function') reconnectTimer = setTimeout(attempt, reconnectBackoff(reconnectAttempts))
       else attempt()
     }
 
