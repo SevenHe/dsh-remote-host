@@ -153,12 +153,28 @@
       try {
         nodes = typeof document === 'object' && document !== null ? document.getElementsByTagName('*').length : 0
       } catch (error) { nodes = 0 }
+      // DOM accounting next to the size sample: a leak shows up as one of these
+      // counters climbing while nodes/heap climb, which names the leaking surface
+      // without another reproduction round.
+      var dom = {}
+      try {
+        if (typeof document === 'object' && document !== null) {
+          dom.cards = document.querySelectorAll('#drh-hovercard').length
+          dom.menus = document.querySelectorAll('.drh-menuSurface').length
+          dom.panels = document.querySelectorAll('.drh-panel, #drh-block-panel').length
+          dom.roots = document.querySelectorAll('#drh-remote-block').length
+          dom.rows = document.querySelectorAll('#drh-remote-block [data-drh-session]').length
+          dom.groups = document.querySelectorAll('#drh-remote-block [data-drh-group]').length
+          dom.body = document.body ? document.body.children.length : 0
+        }
+      } catch (error) { /* counters are best effort */ }
       traceEvent('hb', {
         heap: memory === undefined ? undefined : memory.usedJSHeapSize,
         total: memory === undefined ? undefined : memory.totalJSHeapSize,
         nodes: nodes,
         listeners: traceListeners,
         renders: traceRenders,
+        dom: dom,
       })
     } catch (error) { /* ignore */ }
   }
