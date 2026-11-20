@@ -753,3 +753,40 @@ grep -n ", #fff)\|elevated, #fff" src/client/block/block.css || echo "ok: no whi
 5. 截图对比「本地运行行 vs 远端运行行」，要求图标 id / 尺寸 / 位置一致；
 6. 在 `docs/regression.md` 增加对应回归项（怎么验 + 失败长什么样）。
 
+
+
+## §8 基线不变量与最新更正（2026-11-20 实测）
+
+### 8.1 会话行动作按钮：用不变量，不要用绝对 x
+
+基线里写的 `x=183/212/241` 只在**行宽 272** 时成立。列表出现滚动条时行宽变 264，按钮右对齐会整体左移 8px（实测 175/204/233）。基线是一条**不变量**：
+
+| 不变量 | 值 |
+|---|---|
+| 相邻按钮步进 | **29px** |
+| 按钮盒 | **24×24** |
+| 最右按钮距行右边缘 | **7px**（`rightInset`） |
+
+判定回归时请比对这三项；`parity-snapshot` 现在会同时输出 `rowWidth` 与 `actionsRightInset`，让平移自证。
+
+### 8.2 运行态呈现：是 shipped spinner，不是圆点
+
+之前记录过「自绘圆点 / 灰点」，**已作废**。当前实现照搬 shipped 的 state-dot spinner：
+
+- 选择器 `.drh-stateDot`，SVG 由 track + arc 两段 `currentColor` 描边（2px、圆头）；
+- `1.5s linear` 旋转 + `1.5s ease-in-out` 虚线循环（与 `_dsh-state-dot-spin` / `_dsh-state-dot-dash` 同值）；
+- 位于**前导槽**（标题左侧）；空闲行前导槽**不渲染**任何东西。
+
+回归断言改成「running 行存在 `.drh-stateDot` 且 animation-name 非 none」，**不要**再断言颜色常量。
+
+### 8.3 boot 期 adopt 轮询已收住
+
+`adoptUntilSettled` 原来在 adopt 已成功后仍把 79 次预约跑成空转（每次约 7.2s）。现在：开机即有 carrier → **0 次调度**；carrier 缺席 → 100→250ms 退避，硬上限 24 次 / 6000ms。由 `test/adopt-schedule.test.mjs` 锁住。
+
+### 8.4 `parity-snapshot` 可用的前提（两个坑都已修）
+
+1. **视口必须够高**：默认 headless 约 800×600 时块顶边在 y≈614，整块在折叠线以下，指针探测必然落空 → 脚本现在固定 1440×900；
+2. **必须先展开一个分组**：会话行只在分组展开时渲染，否则 `sessionRow / hoverCard / rowMenu` 恒为 null → 脚本现在会展开首组，并在每次指针探测前 `scrollIntoView` 后**重读坐标**（旧实现用过期坐标，导致永远点不到）。
+
+冷启动 lab 实测：`notes: []`、无 null；header 3×28、viewMenu 200×324/8 项、rowMenu 144×225/6 项、groupMenu 144×117/3 项、hoverCard 244/`rgb(44,44,46)`/gap 16、悬停换槽 folder=none/chevron=flex。
+
