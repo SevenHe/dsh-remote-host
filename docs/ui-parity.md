@@ -434,6 +434,8 @@ html[data-platform='darwin'] .drh-menuBacking {
 ```
 
 > **偏差记录（必须知道）**：上游 `._surface, ._backing` 是 `border-radius: var(--dsw-radius-lg)`；
+
+> **偏差记录（有意偏离原生，2026-11-20）**：原生会话行的状态点在**静止态是透明的**（idle 时不可见，只有 running 显绿）。我们改为**常显**：空闲 `rgb(84, 85, 87)`（原生 idle core 色）、运行 `#2ea043`，尺寸仍 6×6，槽位仍是 `.drh-runDot`（hover 时随 resting 槽被动作按钮替换）。理由：远端会话没有别处能表达状态，用户反馈「看不到会话状态」；透明点在信息上等价于没有状态。验收见 `docs/regression.md` B-24。
 > 我们这里用 `border-radius: inherit`，因为卡片本身已经是 `--dsw-radius-lg`，继承比重复写更不容易漂。两者等价。
 > 另外 `box-shadow` 目前是**字面值**而不是 `var(--dsw-elevation-prominent)`：该 token 在 shipping menu 里解析成这三个图层，
 > 但出了那个作用域解析结果不同（`block.css` 的注释已记录）。**新代码请优先写 `var(--dsw-elevation-prominent)`**，
