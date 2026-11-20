@@ -204,6 +204,10 @@ export function createPage(options = {}) {
   }
 
   return {
+    /** Stop timers the shim registered, so a suite leaves no pending work behind. */
+    dispose() {
+      try { if (typeof sandbox.__DSH_REMOTE_HOST_STOP_POLL__ === 'function') sandbox.__DSH_REMOTE_HOST_STOP_POLL__() } catch (error) { /* best effort */ }
+    },
     sandbox,
     built,
     config,
