@@ -514,6 +514,12 @@ async function main () {
       await cdp.send("Page.navigate", { url: origin + "/" })
     }
 
+    // A fresh profile boots into the welcome gate: the sidebar (and our block) only mounts
+    // after it is dismissed, so every selector below would return null without this.
+    await sleep(16000)
+    await cdp.evaluate("(() => { const b = [...document.querySelectorAll('button')].find((x) => (x.textContent || '').trim() === '继续'); if (b) b.click(); return true })()")
+    await sleep(2500)
+
     // darwin-only rules (menu backing and friends) never apply without this.
     await cdp.evaluate("document.documentElement.dataset.platform = \"darwin\"")
 
