@@ -790,3 +790,20 @@ grep -n ", #fff)\|elevated, #fff" src/client/block/block.css || echo "ok: no whi
 
 冷启动 lab 实测：`notes: []`、无 null；header 3×28、viewMenu 200×324/8 项、rowMenu 144×225/6 项、groupMenu 144×117/3 项、hoverCard 244/`rgb(44,44,46)`/gap 16、悬停换槽 folder=none/chevron=flex。
 
+## 7.1 会话状态一致性（硬约束，以**渲染后实测值**判定）
+
+状态一致性**不能只看 CSS 声明值**，必须以 `getBoundingClientRect()` / `getComputedStyle()` 的渲染结果、以及 SVG 的 `viewBox` 与实际渲染尺寸的比例为准：声明 12px + viewBox 20x20 与声明 14px + viewBox 24x24 视觉尺寸完全不同。
+
+shipped 运行态 spinner 实测规格（从 shipped DOM 的属性与 computed style 取得）：
+
+| 项 | shipped 实测值 |
+| --- | --- |
+| 外层槽位 | `SPAN.JoiKIa_slot`，`margin-right: 0px` |
+| SVG 渲染尺寸 | `width/height = 14`（CSS 亦为 14px） |
+| viewBox | `0 0 24 24`（**不是** 20x20） |
+| track / arc | `stroke-width: 2px`，`stroke-linecap: round` |
+| 颜色 | `rgb(129, 133, 140)`（label-tertiary） |
+| 旋转 | `_spinnerMotion`：`transform-origin: center center`，`1.5s linear infinite` |
+| 虚线 | `_spinnerArc`：`dasharray 12,150`，`1.5s ease-in-out infinite`，keyframe 末帧 offset 回到 0 |
+
+远端行必须逐项相等：槽位 14px、SVG 14x14、viewBox `0 0 24 24`、stroke 2 round、同一 token 颜色、同一动画数值。

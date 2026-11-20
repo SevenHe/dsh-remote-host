@@ -1626,9 +1626,10 @@ html[data-platform='darwin'] .drh-menuBacking {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 12px;
-  height: 12px;
-  margin-right: 5px;
+  /* Measured from the shipped row: the slot is the svg box (14px) with no extra margin. */
+  width: 14px;
+  height: 14px;
+  margin-right: 0;
   color: var(--dsw-alias-label-tertiary, #81858c);
 }
 .drh-stateDotSvg {
