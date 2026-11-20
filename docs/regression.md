@@ -158,5 +158,27 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 
 ## 6. 工具状态（诚实标注）
 
-- `scripts/parity-snapshot.mjs`：**目前不能当作可信的一键回归**。实测在「新建的 lab profile」上运行，即使插件已成功挂载（启动日志有 `mounted ... at /devbox`、配置 `remoteBlock: true`），脚本仍报 `no #drh-remote-block` 并让所有字段为 null。已在脚本里补了「点掉首次引导屏 —— 继续」这一步（此前完全缺失），但仍未解决；下一步应先打印页面 `document.body.innerText` 前 200 字与 `document.querySelectorAll('[data-slot]')`，确认页面到底停在哪一屏（欢迎页 / 会话页 / 鉴权页），再决定等待条件。**在修好之前，回归请用第 2 节的 B 级 CDP 片段手工执行。**
+- `scripts/parity-snapshot.mjs`：**可用**（2026-11-20 在 lab 19972 + headless Chrome 157 上实测：输出所有字段非 null，`meta.notes` 为空）。此前"全 null"有两个真因，均已在脚本内修掉：
+
+  1. **页面停在哪一屏**：默认 headless 视口约 800×600，远端块顶边在 y≈614，整块落在折叠线以下，所有指针探测都落空；且新建 profile 可能停首次引导屏。脚本现在会「固定视口 1440×900 → 循环点掉引导（继续/Continue/…）→ 等 `[data-slot="sidebar.workspaces"]` → 必要时点 `打开侧边栏`」，并在失败时把 `location.href / body.innerText 前 200 字 / [data-slot] 列表 / 是否有继续按钮` 打进 `meta.notes`（不再只报一句 no #drh-remote-block）。
+  2. **没有会话行**：块只在分组展开时渲染会话行，此前脚本从不展开分组，于是 `sessionRow / hoverCard / rowMenu` 恒为 null。脚本现在会展开第一个工作区分组，并在每次指针探测前 `scrollIntoView` 后重新读取坐标（此前用的是几步之前的旧坐标，分组菜单因此点不到）。
+
+  实测输出（lab 19972，viewport 1440×900，darwin）：
+
+  | 字段 | 实测值 | 与基线 |
+  |---|---|---|
+  | `header.controls` | 3 个控件，均 28×28 | 一致 |
+  | `sessionRow.rowHeight` | 32 | 一致 |
+  | `sessionRow.actions` | 3 个按钮 24×24，行内相对 x=175/204/233 | 步进 29px、盒 24px 一致；绝对位置差 8px（见下） |
+  | `sessionRow.rowWidth / actionsRightInset` | 264 / 7 | 基线隐含 272 / 7 |
+  | `projectRow` | 32 高，1 个按钮 24×24 | 一致 |
+  | `viewMenu.box` | 200×324，8 项，三段 | 一致 |
+  | `rowMenu.box` | 144×225，6 项 | 一致 |
+  | `groupMenu.box` | 144×117，3 项 | 新增基线 |
+  | `hoverCard` | w=244，bg=rgb(44,44,46)，anchorGap=16，title 14px/20px | 一致 |
+  | `swap`（悬停换槽） | folder=none，chevron=flex | 一致 |
+
+  **已知偏差（不是回归）**：`sessionRow.actions[].x` 实测 175/204/233，文档基线 183/212/241，差 8px。原因是行宽 264（基线隐含 272）：分组多到溢出时经典滚动条占去 8px，而按钮是右对齐的。判定请用三个不变量：**步进 29px、盒 24px、rightInset 7px**；`rowWidth` 也在快照里，可直接解释这一平移。
+
+  **适用条件**：需要能连到该 lab 的 CDP 页面（`--port <lab> --cdp <cdp>`），需要 profile 上 `remoteBlock: true`，且 lab 已挂载远端（启动日志有 `mounted ... at /devbox`）。菜单/悬停类字段需要真实鼠标事件，headless 下同样成立。
 - `scripts/lab-block.sh`：可用；但它只起 `dsh web` 服务 + 复制 profile，浏览器侧要自己起（见脚本注释）。
