@@ -153,3 +153,8 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 | B-22 | 运行中的远端会话行在**静止态**就能看出来（状态点显色），空闲时不可见 | 找一条 `running:true` 的远端会话，读该行 `.drh-runDot` 的 `background`，应为绿色；空闲行为透明 | 运行/空闲长得一样（`.drh-runDotOn` 未加或少加） |
 
 **通用教训**：验证一个「隐藏/抵消」类修复时，不能只验「可见行数没变」，还要验**文案/计数行**（`展开其余 N`）、`aria`/可 focus 性、以及**操作一次之后**的状态（重挂载会冲掉内联样式）。
+
+## 6. 工具状态（诚实标注）
+
+- `scripts/parity-snapshot.mjs`：**目前不能当作可信的一键回归**。实测在「新建的 lab profile」上运行，即使插件已成功挂载（启动日志有 `mounted ... at /devbox`、配置 `remoteBlock: true`），脚本仍报 `no #drh-remote-block` 并让所有字段为 null。已在脚本里补了「点掉首次引导屏 —— 继续」这一步（此前完全缺失），但仍未解决；下一步应先打印页面 `document.body.innerText` 前 200 字与 `document.querySelectorAll('[data-slot]')`，确认页面到底停在哪一屏（欢迎页 / 会话页 / 鉴权页），再决定等待条件。**在修好之前，回归请用第 2 节的 B 级 CDP 片段手工执行。**
+- `scripts/lab-block.sh`：可用；但它只起 `dsh web` 服务 + 复制 profile，浏览器侧要自己起（见脚本注释）。
