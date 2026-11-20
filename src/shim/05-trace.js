@@ -47,7 +47,9 @@
       }
       var out = {}
       var keys = Object.keys(detail)
-      for (var index = 0; index < keys.length && index < 6; index += 1) {
+      // 12 keys: the heartbeat alone carries seven counters, and a cap of six
+      // silently dropped every DOM counter after the first one.
+      for (var index = 0; index < keys.length && index < 12; index += 1) {
         var key = keys[index]
         if (typeof key !== 'string' || key.length > 24) continue
         var value = traceScalar(detail[key])
