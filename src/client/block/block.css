@@ -1612,3 +1612,19 @@ html[data-platform='darwin'] .drh-menuBacking {
   .drh-dialogButtonPrimary:hover { background: var(--dsw-alias-label-primary); opacity: 0.88; }
 }
 
+
+/* The shipped row's state dot: present at rest, transparent while idle, tinted while
+   running. It rides the resting slot, so the hover action cluster replaces it. */
+.drh-runDot {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.drh-runDot.drh-runDotOn {
+  background: #2ea043;
+}
