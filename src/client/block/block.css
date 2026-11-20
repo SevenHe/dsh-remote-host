@@ -1616,12 +1616,61 @@ html[data-platform='darwin'] .drh-menuBacking {
 /* State dot: the shipped row indicator, reproduced. One dot in the LEADING seat, rendered
    only while the Session is not idle (Rows.tsx: showStatus = state !== 'idle'), so an idle
    remote row carries nothing extra and a running one shows the green dot. */
-.drh-runDot {
-  display: inline-block;
-  flex: none;
-  width: 6px;
-  height: 6px;
+
+/* Running state, copied from the shipped state dot: an SVG spinner whose track and arc are
+   currentColor strokes (2px, round caps), rotated on a 1.5s linear spin while the arc dashes on a
+   1.5s ease-in-out cycle - the same values as the shipped rules (_spinner_*,
+   _dsh-state-dot-spin, _dsh-state-dot-dash). Idle rows render nothing in the leading seat. */
+.drh-stateDot {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
   margin-right: 5px;
-  border-radius: 50%;
-  background: #2ea043;
+  color: var(--dsw-alias-label-tertiary, #81858c);
+}
+.drh-stateDotSvg {
+  transform-origin: center center;
+  animation: 1.5s linear 0s infinite normal none running drh-state-dot-spin;
+}
+.drh-stateDotTrack,
+.drh-stateDotArc {
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.drh-stateDotTrack {
+  opacity: 0.25;
+}
+.drh-stateDotArc {
+  stroke-dasharray: 12, 150;
+  animation: 1.5s ease-in-out 0s infinite normal none running drh-state-dot-dash;
+}
+@keyframes drh-state-dot-spin {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+@keyframes drh-state-dot-dash {
+  0% {
+    stroke-dasharray: 12, 150;
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dasharray: 24, 150;
+    stroke-dashoffset: -6;
+  }
+  100% {
+    stroke-dasharray: 12, 150;
+    stroke-dashoffset: -24;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .drh-stateDotSvg,
+  .drh-stateDotArc {
+    animation: none;
+  }
 }
