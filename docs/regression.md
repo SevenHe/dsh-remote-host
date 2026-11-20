@@ -1,0 +1,140 @@
+# 已验收行为的回归清单（regression）
+
+> 这些行为是用户**已逐条验收**的。任何改动（尤其 `src/client/block/block.css`、`lib/client.js` 的 DOM 结构、
+> 任何"顺手重构成 React"的尝试）都必须过一遍本表。规范见 [`ui-parity.md`](./ui-parity.md)。
+
+## 0. 三种验证等级
+
+| 等级 | 手段 | 适用 |
+|---|---|---|
+| **A 自动** | `node scripts/parity-snapshot.mjs --port <lab> --cdp <cdp>` 输出 JSON，与 `ui-parity.md` §4 表 diff | 尺寸/字体/颜色/位置 |
+| **B 半自动** | CDP 片段（下文 `[B-n]` 可直接粘到 Console 或 `Runtime.evaluate`） | 结构/数量/状态类 |
+| **C 人工** | 严格步骤，一次 30 秒 | 闪烁、切换、往返这类时序行为 |
+
+启动环境：
+
+```sh
+./scripts/lab-block.sh                                  # 打印 "dsh web: http://127.0.0.1:19949/?token=…"
+"/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness" --remote-debugging-port=9222 &
+node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
+```
+
+> 前置：页面必须是 **darwin**（`document.documentElement.dataset.platform = 'darwin'`）且**鼠标是真实移动**（`Input.dispatchMouseEvent`）。
+> 用 `dispatchEvent` 测出的结果不算数（`ui-parity.md` §2.3）。
+
+## 1. 清单
+
+| # | 已验收行为 | 期望 | 一键验证 |
+|---|---|---|---|
+| 1 | 表头 3 个控件 | 3 个 28×28 图标：`search-outline-regular` / `sliders-two-outline-regular` / `project-add-outline-regular` | **A**：`header.controls.length===3`，每项 `28`；图标 id 见 `header.controls[].icon` |
+| 2 | 目录行静止=文件夹，hover=实心三角 | 静止 `.drh-folder` 可见、`.drh-chevron` 隐藏；hover 反过来 | **B**：`[B-2]` |
+| 3 | 目录行 hover 出两按钮 | ellipsis（`…`）/ new-chat，24×24，x=212/241 | **A**：`projectRow.actions[]`；**B**：`[B-3]` |
+| 4 | 会话行 hover 出三按钮 | ellipsis / archive / pin，24×24，x=183/212/241，svg 16/14/14 | **A**：`sessionRow.actions[]`；**B**：`[B-4]` |
+| 5 | 行菜单 | 6 项、宽 144、item 高 34、pad 6px 8px | **A**：`rowMenu`（`box/items`）|
+| 6 | 视图菜单 | 8 项、分三段、宽 200、dense 行高 30、尾 check 14×14 | **A**：`viewMenu`（`items/label/separator/check`）|
+| 7 | 悬停卡 | 宽 244、`rgb(44,44,46)`、r16、pad 12/16、标题 14/20；位置=区块右边界+16；约 800ms 出现 | **A**：`hoverCard.*`（含 `anchor`、`delayMs`）；**B**：`[B-7]` |
+| 8 | 菜单**右对齐**触发控件 | 菜单右边缘 = 触发控件右边缘（不是左对齐） | **A**：`menu.alignment`（`end`）；**B**：`[B-8]` |
+| 9 | 菜单圆角 + 磨砂 | 卡片 r16；material `rgba(48,49,54,0.64)` + `blur(40px) saturate(1.5)`；darwin backing `z=-2`、`border-radius`=16、`display:block` | **A**：`menuMaterial.*` / `menuBacking.*` |
+| 10 | 点远端会话能切换 | 点一行 → 主区切到该远端会话（不是本地会话） | **C**：`[C-10]` |
+| 11 | add-panel 不清空 | 展开"新建工作区"面板后，已有列表**仍在**（不被清空） | **C**：`[C-11]` |
+| 12 | 不闪烁 | 列表刷新/切换分组时不出现整块白闪或重建 | **C**：`[C-12]` |
+| 13 | 远端会话不出现在原生"未分组" | 原生列表的未分组桶里**没有** `drh:` 前缀的会话 | **B**：`[B-13]` |
+| 14 | 置顶/归档往返 | 置顶 → 出现置顶区；取消 → 回原位；归档 → 进归档；取消归档 → 回列表 | **C**：`[C-14]` |
+| 15 | 目录菜单 3 项 | 重命名 / 在 Finder 中显示 / 删除，宽 144、高 117 | **A**：`groupMenu`（`box/count`）；**B**：`[B-15]` |
+
+## 2. B 级片段（粘到 CDP `Runtime.evaluate`，或 DevTools Console）
+
+> 前提：鼠标已用 `Input.dispatchMouseEvent` 悬停在目标行上，且 `dataset.platform='darwin'`。
+
+```js
+// [B-2] 目录行 hover 换槽
+(() => {
+  const row = document.querySelector('#drh-remote-block [data-drh-group]')
+  const folder = row.querySelector('.drh-folder')
+  const chevron = row.querySelector('.drh-chevron')
+  return { folder: getComputedStyle(folder).display, chevron: getComputedStyle(chevron).display }
+})()   // 期望：hover 时 folder=none, chevron=inline-flex
+
+// [B-3] / [B-4] 行内按钮：数量 + 盒子 + 相对 x
+(() => {
+  const sel = '#drh-remote-block [data-drh-row]'      // 或 [data-drh-session]
+  const row = document.querySelector(sel)
+  const base = row.getBoundingClientRect().left
+  return [...row.querySelectorAll('[data-drh-rowmenu],[data-drh-rowarchive],[data-drh-rowpin]')].map((el) => {
+    const r = el.getBoundingClientRect()
+    return { x: Math.round(r.left - base), w: Math.round(r.width), h: Math.round(r.height) }
+  })
+})()   // 会话行期望 x=183/212/241，w=h=24；目录行 x=212/241
+
+// [B-7] 悬停卡：尺寸 / 位置 / 字体 / 出现延迟
+(() => {
+  const card = document.querySelector('.drh-hoverCard')
+  if (card === null) return { missing: true, hint: '真实鼠标悬停后约 800ms 再读' }
+  const r = card.getBoundingClientRect()
+  const root = document.getElementById('drh-remote-block').getBoundingClientRect()
+  const title = card.querySelector('.drh-hoverTitle')
+  const cs = title === null ? null : getComputedStyle(title)
+  return {
+    w: Math.round(r.width), bg: getComputedStyle(card).backgroundColor,
+    radius: getComputedStyle(card).borderTopLeftRadius,
+    anchorGap: Math.round(r.left - root.right),
+    titleFont: cs === null ? null : cs.fontSize + '/' + cs.lineHeight,
+  }
+})()   // 期望 w=244, anchorGap=16, titleFont=14px/20px
+
+// [B-8] 菜单右对齐：菜单右边缘 == 触发控件右边缘（±1px）
+(() => {
+  const menu = document.querySelector('.drh-menuSurface')
+  const trigger = document.querySelector('#drh-remote-block [data-drh-groupmenu]')  // 或视图菜单触发控件
+  if (menu === null || trigger === null) return { missing: true }
+  return { diff: Math.round(menu.getBoundingClientRect().right - trigger.getBoundingClientRect().right) }
+})()   // 期望 |diff| <= 1
+
+// [B-15] 目录菜单项数与文案
+(() => {
+  const menu = document.querySelector('.drh-menuSurface')
+  return [...menu.querySelectorAll('.drh-menuItem')].map((el) => el.textContent.trim())
+})()   // 期望 3 项：重命名工作区 / 在 Finder 中显示 / 删除
+
+// [B-13] 原生"未分组"里不能出现远端会话
+(() => {
+  const remote = globalThis.__DSH_REMOTE_HOST_STATE__
+  const ids = new Set(remote !== undefined && Array.isArray(remote.ids) ? remote.ids : [])
+  const leaked = [...document.querySelectorAll('[data-drh-session]')]
+    .filter((el) => ids.has(el.getAttribute('data-drh-session')) === false)
+  return { remoteIds: ids.size, blockRows: document.querySelectorAll('[data-drh-session]').length }
+})()
+```
+
+## 3. C 级步骤（人工，按顺序做）
+
+**[C-10] 点远端会话能切换**
+1. 真实鼠标点击一个远端会话行（`[data-drh-session]`）。
+2. 主区标题/内容变成该会话；**不能**跳回本地会话，也不能空白。
+3. 再点第二个远端会话 → 能再次切换（连续切换 2 次，证明不是首次初始化碰巧成功）。
+
+**[C-11] add-panel 不清空**
+1. 点表头的 `project-add-outline-regular`（新建工作区）。
+2. 面板打开时，下面的工作区/会话列表**仍然在**。
+3. 关掉面板 → 列表未重排、未丢失滚动位置。
+
+**[C-12] 不闪烁**
+1. 开 Performance 面板录制，重复"hover 行 → 移开"10 次。
+2. 期望：没有整块白闪；`#drh-remote-block` 节点**不重建**（`data-drh-inst` 不变）。
+3. 若 `data-drh-inst` 变化 → 说明走了"整块重建"路径（见 `ui-parity.md` §5 第 7 条）。
+
+**[C-14] 置顶/归档往返**
+1. 会话行 hover → pin → 该行出现在置顶区；unpin → 回到原分组原位置。
+2. archive → 从列表消失、进入归档；unarchive → 回到列表。
+3. 往返 2 次，状态不能"粘住"，也不能产生重复行。
+
+## 4. 回归失败怎么定位
+
+| 现象 | 先查 |
+|---|---|
+| 尺寸/位置整体偏移 | `ui-parity.md` §3.3 原子（24 盒 / −4 margin / gap 13） |
+| 只有 darwin 下不对 | 忘了 `dataset.platform='darwin'`（§2.4） |
+| hover 类行为"测不出来" | 用了 `dispatchEvent` 而不是 `Input.dispatchMouseEvent`（§2.3） |
+| 磨砂消失 / 变实心 | material 与 backing 的 z-index 关系（§3.2、§5 第 3 条） |
+| 白窗 | 背景 token 带了白色兜底（§3.1） |
+| 菜单飘到另一侧 | `align` 传成了 `start`（§4.5、§2 的 `showMenu`） |

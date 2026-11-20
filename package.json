@@ -27,7 +27,7 @@
     "collaboration"
   ],
   "peerDependencies": {
-    "@deepseek-ai/cordis": "*"
+    "@deepseek-ai/cordis": "^0.2.2-rc.3"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -50,6 +50,7 @@
   "scripts": {
     "build:shim": "node scripts/build-shim.mjs",
     "test": "node --test test/*.test.mjs",
+    "parity": "node scripts/parity-snapshot.mjs",
     "check": "node scripts/build-shim.mjs --check && node --check lib/index.js && node --check lib/client.js && node scripts/verify-manifest.mjs && node scripts/verify-index.mjs && npm test",
     "ensure-profile": "node scripts/ensure-profile.mjs",
     "install-selfheal": "node scripts/install-selfheal.mjs"
