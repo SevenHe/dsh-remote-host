@@ -1,6 +1,6 @@
 {
   "name": "dsh-remote-host",
-  "version": "1.14.2",
+  "version": "1.14.3",
   "description": "Mount a remote DeepSeek Harness host into this app's native UI — its sessions, workspaces, super agent, tools and environment, driven from here.",
   "type": "module",
   "main": "lib/index.js",
