@@ -26,6 +26,7 @@ const HELP = [
   "  --out <path>        also write the JSON here (default: stdout only)",
   "  --home <dir>        HOME to read credentials from (default: os.homedir())",
   "  --secret-file <p>   credentials YAML (default: <home>/.dsh/.credentials.yaml)",
+  "  --boot-wait <ms>    wait before touching the page (default 16000)",
   "  --no-cookie         do not mint a dsh-auth cookie (page must already be logged in)",
   "  --self-test         print the JSON skeleton without touching a browser",
   "  --help              print this",
@@ -40,7 +41,7 @@ function fail (message) {
 }
 
 function parseArgs (argv) {
-  const out = { cdp: 9222, out: null, home: homedir(), secretFile: null, cookie: true, selfTest: false, port: null }
+  const out = { cdp: 9222, out: null, home: homedir(), secretFile: null, cookie: true, selfTest: false, port: null, bootWaitMs: 16000 }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     const next = () => {
@@ -55,6 +56,7 @@ function parseArgs (argv) {
     else if (arg === "--out") out.out = next()
     else if (arg === "--home") out.home = next()
     else if (arg === "--secret-file") out.secretFile = next()
+    else if (arg === "--boot-wait") out.bootWaitMs = Number(next())
     else if (arg === "--no-cookie") out.cookie = false
     else if (arg === "--self-test") out.selfTest = true
     else fail("unknown argument " + arg)
@@ -225,6 +227,60 @@ const pageEnv = () => {
   }
 }
 
+/** The shell slot the block mounts into; absent until the app shell has rendered. */
+const pageSidebarSlot = () => document.querySelector('[data-slot="sidebar.workspaces"]') !== null
+
+/** Where the app actually stopped, so a failed run explains itself instead of printing nulls. */
+const pageDiagnose = () => {
+  const slots = []
+  for (const el of document.querySelectorAll('[data-slot]')) {
+    const name = el.getAttribute('data-slot')
+    if (slots.indexOf(name) === -1) slots.push(name)
+  }
+  const buttons = [...document.querySelectorAll('button')]
+  const block = document.getElementById('drh-remote-block')
+  const rect = block === null ? null : block.getBoundingClientRect()
+  return {
+    href: location.href,
+    ready: document.readyState,
+    text: (document.body === null ? '' : document.body.innerText).slice(0, 200),
+    slotCount: slots.length,
+    slots: slots.slice(0, 20),
+    hasContinueGate: buttons.some((b) => (b.textContent || '').trim() === '继续'),
+    blocks: document.querySelectorAll('#drh-remote-block').length,
+    blockBox: rect === null ? null : { x: Math.round(rect.x), w: Math.round(rect.width) },
+    groups: document.querySelectorAll('#drh-remote-block [data-drh-group]').length,
+    rows: document.querySelectorAll('#drh-remote-block [data-drh-session]').length,
+  }
+}
+
+/** Block width, used to tell a collapsed sidebar rail from an open one. */
+const pageBlockBox = () => {
+  const block = document.getElementById('drh-remote-block')
+  if (block === null) return null
+  const rect = block.getBoundingClientRect()
+  return { x: Math.round(rect.x), w: Math.round(rect.width) }
+}
+
+/** Bring one element into the viewport, so pointer input can reach it. */
+const pageScrollIntoView = (selector) => {
+  const el = document.querySelector(selector)
+  if (el === null) return false
+  el.scrollIntoView({ block: "center" })
+  return true
+}
+
+/** Whether a session row is rendered (a group is expanded). */
+const pageHasSessionRow = () => document.querySelector('#drh-remote-block [data-drh-session]') !== null
+
+/** Click one element by selector through the page, for triggers a pointer cannot reach. */
+const pageClickSelector = (selector) => {
+  const el = document.querySelector(selector)
+  if (el === null) return false
+  el.click()
+  return true
+}
+
 const pageCenter = (selector) => {
   const el = document.querySelector(selector)
   if (el === null) return null
@@ -285,7 +341,16 @@ const pageRow = (rowSelector, actionSelector) => {
       display: cs.display,
     }
   })
-  return { rowHeight: Math.round(rowRect.height), actions }
+  const last = actions.length === 0 ? null : actions[actions.length - 1]
+  return {
+    rowHeight: Math.round(rowRect.height),
+    rowWidth: Math.round(rowRect.width),
+    // Gap between the last action and the row's right edge. A row that is narrower only
+    // because a classic scrollbar took horizontal space still reports the same inset,
+    // which is what makes an 8px x shift easy to read instead of looking like a regression.
+    actionsRightInset: last === null ? null : Math.round(rowRect.right - (rowRect.left + last.x + last.w)),
+    actions,
+  }
 }
 
 const pageMenu = (triggerSelector) => {
@@ -460,6 +525,52 @@ function callWith (cdp, fn, ...args) {
 
 const pageBlockReady = () => document.querySelector("#drh-remote-block") !== null
 
+/**
+ * Dismiss the first-run gates. A fresh profile can show more than one, so keep clicking
+ * while one is present instead of assuming a single step.
+ * @returns how many gates were dismissed.
+ */
+async function dismissGates (cdp) {
+  let dismissed = 0
+  for (let round = 0; round < 6; round += 1) {
+    const clicked = await cdp.evaluate("(() => { const b = [...document.querySelectorAll('button')].find((x) => ['继续', 'Continue', '开始使用', 'Get started'].includes((x.textContent || '').trim())); if (!b) return false; b.click(); return true })()")
+    if (clicked !== true) break
+    dismissed += 1
+    await sleep(1200)
+  }
+  return dismissed
+}
+
+/**
+ * Open the sidebar when the app booted with it collapsed. A collapsed rail leaves the
+ * block at a negative x with no width, so every pointer-driven measurement below would
+ * land off-screen and report null.
+ * @returns whether the block ends up on screen with a usable width.
+ */
+async function ensureSidebarExpanded (cdp) {
+  const box = await cdp.call(pageBlockBox)
+  if (box === null) return false
+  if (box.w > 80 && box.x >= 0) return true
+  const opened = await cdp.evaluate("(() => { const b = [...document.querySelectorAll('button')].find((x) => ['打开侧边栏', 'Open sidebar', '展开侧边栏'].includes((x.getAttribute('aria-label') || '').trim())); if (!b) return false; b.click(); return true })()")
+  if (opened !== true) return false
+  await sleep(900)
+  const after = await cdp.call(pageBlockBox)
+  return after !== null && after.w > 80 && after.x >= 0
+}
+
+/**
+ * Expand the first workspace group so session rows exist. The block renders a group's
+ * sessions only while it is expanded, and every session-level measurement needs a row.
+ * @returns whether a session row is rendered afterwards.
+ */
+async function ensureGroupExpanded (cdp) {
+  if ((await cdp.call(pageHasSessionRow)) === true) return true
+  const clicked = await cdp.evaluate("(() => { const g = document.querySelector('#drh-remote-block [data-drh-group]'); if (g === null) return false; g.click(); return true })()")
+  if (clicked !== true) return false
+  await sleep(700)
+  return (await cdp.call(pageHasSessionRow)) === true
+}
+
 async function main () {
   const options = parseArgs(process.argv.slice(2))
   const snapshot = skeleton()
@@ -493,6 +604,14 @@ async function main () {
     await cdp.send("Runtime.enable")
     await cdp.send("Page.enable")
     await cdp.send("Network.enable")
+    // A headless window defaults to about 800x600, which in this app pushes the remote
+    // block below the fold: every pointer-driven probe would then measure an unhovered,
+    // zero-size row. Pin a viewport tall enough for the sidebar plus the block.
+    try {
+      await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false })
+    } catch (error) {
+      snapshot.meta.notes.push("could not pin the viewport (" + (error instanceof Error ? error.message : String(error)) + ")")
+    }
 
     if (options.cookie === true) {
       const secretPath = options.secretFile ?? join(options.home, ".dsh", ".credentials.yaml")
@@ -514,23 +633,38 @@ async function main () {
       await cdp.send("Page.navigate", { url: origin + "/" })
     }
 
-    // A fresh profile boots into the welcome gate: the sidebar (and our block) only mounts
-    // after it is dismissed, so every selector below would return null without this.
-    await sleep(16000)
-    await cdp.evaluate("(() => { const b = [...document.querySelectorAll('button')].find((x) => (x.textContent || '').trim() === '继续'); if (b) b.click(); return true })()")
-    await sleep(2500)
+    // A fresh profile boots into the welcome gate and can leave the sidebar collapsed. The
+    // block only mounts once the shell's sidebar slot exists, so wait for the app itself
+    // before any block selector is meaningful, and record what the page actually showed
+    // when something is still missing.
+    await sleep(options.bootWaitMs)
+    const gates = await dismissGates(cdp)
+    if (gates > 0) snapshot.meta.notes.push("dismissed " + gates + " first-run gate(s)")
+    await sleep(1500)
 
     // darwin-only rules (menu backing and friends) never apply without this.
     await cdp.evaluate("document.documentElement.dataset.platform = \"darwin\"")
 
+    const shell = await cdp.waitFor(pageSidebarSlot, 20000)
+    if (shell !== true) {
+      snapshot.meta.notes.push("the app shell never rendered [data-slot=sidebar.workspaces]; page state: " + JSON.stringify(await cdp.call(pageDiagnose)))
+    }
+
     const ready = await cdp.waitFor(pageBlockReady, 20000)
-    if (ready !== true) snapshot.meta.notes.push("no #drh-remote-block: enable config.remoteBlock on this profile")
+    if (ready !== true) {
+      snapshot.meta.notes.push("no #drh-remote-block (check config.remoteBlock); page state: " + JSON.stringify(await cdp.call(pageDiagnose)))
+    } else {
+      if ((await ensureSidebarExpanded(cdp)) !== true) snapshot.meta.notes.push("the sidebar stayed collapsed; pointer-driven fields may be null")
+      if ((await ensureGroupExpanded(cdp)) !== true) snapshot.meta.notes.push("no workspace group expanded; session-level fields may be null")
+    }
 
     snapshot.env = await cdp.call(pageEnv)
     snapshot.header = (await cdp.call(pageHeader)) ?? snapshot.header
     if (snapshot.env !== null && snapshot.env !== undefined) snapshot.meta.platform = snapshot.env.platform
 
     const groupSelector = "#drh-remote-block [data-drh-group]"
+    await callWith(cdp, pageScrollIntoView, groupSelector)
+    await sleep(200)
     const groupCenter = await callWith(cdp, pageCenter, groupSelector)
     if (groupCenter === null) {
       snapshot.meta.notes.push("no [data-drh-group] row: swap/projectRow/groupMenu left null")
@@ -542,6 +676,8 @@ async function main () {
     }
 
     const sessionSelector = "#drh-remote-block [data-drh-session]"
+    await callWith(cdp, pageScrollIntoView, sessionSelector)
+    await sleep(200)
     const sessionCenter = await callWith(cdp, pageCenter, sessionSelector)
     if (sessionCenter === null) {
       snapshot.meta.notes.push("no [data-drh-session] row: sessionRow/hoverCard/rowMenu left null")
@@ -567,6 +703,8 @@ async function main () {
     }
 
     const viewTrigger = "#drh-remote-block [data-drh-viewmenu]"
+    await callWith(cdp, pageScrollIntoView, viewTrigger)
+    await sleep(200)
     const viewCenter = await callWith(cdp, pageCenter, viewTrigger)
     if (viewCenter === null) {
       snapshot.meta.notes.push("no view menu trigger")
@@ -579,8 +717,14 @@ async function main () {
     }
 
     if (groupCenter !== null) {
-      await cdp.mouseMove(groupCenter.x, groupCenter.y)
-      await sleep(150)
+      // Re-read the row immediately before hovering it: the session and header steps above
+      // scrolled the sidebar, so a centre measured earlier no longer points at this row,
+      // and the menu trigger only gains a box while the row is actually hovered.
+      await callWith(cdp, pageScrollIntoView, groupSelector)
+      await sleep(200)
+      const groupHover = await callWith(cdp, pageCenter, groupSelector)
+      if (groupHover !== null) await cdp.mouseMove(groupHover.x, groupHover.y)
+      await sleep(350)
       const groupTrigger = groupSelector + " [data-drh-groupmenu]"
       const groupMenuCenter = await callWith(cdp, pageCenter, groupTrigger)
       if (groupMenuCenter === null) {

@@ -167,8 +167,12 @@ export function createPage(options = {}) {
     getElementsByTagName: () => ({ length: 0 }),
   }
 
-  /** Every socket the page opens goes through here so tests can drive both legs. */
-  sandbox.__DSH_TRANSPORT__ = {
+  /**
+   * Every socket the page opens goes through here so tests can drive both legs.
+   * Passing carrier:false withholds it entirely, which is how a test reproduces a
+   * shell that publishes its carrier only after this script has run.
+   */
+  sandbox.__DSH_TRANSPORT__ = options.carrier === false ? undefined : {
     fetch: fetchImpl,
     createWebSocket: (url) => {
       const kind = String(url).includes(config.mount) ? 'remote' : 'local'
