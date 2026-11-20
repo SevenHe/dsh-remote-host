@@ -189,3 +189,64 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 | B-27 | 页面 hidden 时**不轮询** | CDP `Page.setWebLifecycleState` 置 frozen 后统计 Network 中 `devbox/api/session/list` 请求数不再增长，恢复后恢复增长 | hidden 期间仍每 4 秒发请求 |
 | B-28 | 数据持续变化时**不抖动** | 每 5 秒改一次某会话 running/updatedAt，采 60 秒：announce 随变化增长，但 DOM 节点数与 heap 平稳 | 每次 tick 整块重绘，节点数/内存持续上涨 |
 | B-29 | 手动排序**不被周期刷新改写** | 切「手动排序」并拖拽（或写 `localStorage["drh:order"]`），让轮询跑 60 秒，前后组顺序数组应完全相同 | 刷新后组顺序被活跃度重排 |
+
+### B-26..B-29 实测基线（2026-11-20，lab 19980，headless Chrome 157，viewport 1440×900）
+
+远端 Host 为 10.37.114.43:3082（108 条会话）。注入方式：在页面内包装 `fetch`，只改写挂载侧 `devbox/api/session/list` 的应答；digest → publish → `drh:sessions` → 重绘 的生产链路完全不变。
+
+**B-26（自动刷新 ≤5s，全程无点击）**：
+
+| 事件 | t (ms, performance.now) | 差值 |
+|---|---|---|
+| 翻转 false→true | t0 = 24226 | — |
+| `.drh-stateDot` 出现 | t1 = 28205.5 | **rise 3980 ms** |
+| 翻转 true→false | t2 = 28205.5 | — |
+| `.drh-stateDot` 消失 | t3 = 32269.7 | **fall 4064 ms** |
+
+触发重绘的 announce：t=28196（DOM 前 9.6 ms）、t=32265。上游轮询周期 `POLL_INTERVAL_MS = 4000`，所以延迟上界就是 4s + 渲染。**结论：≤5s 成立。**
+
+**B-27（hidden 不轮询）**：用「激活另一个标签页」把页面真正置为 hidden（`Page.setWebLifecycleState` 只接受 frozen/active，不接受 hidden）。
+
+| 阶段 | 时间窗 | `devbox/api/session/list` 请求数 |
+|---|---|---|
+| A 可见基线 | 12000 ms | **2** |
+| B hidden（`document.visibilityState === "hidden"`） | 20000 ms | **0** |
+| C 恢复可见 | 12000 ms | **3** |
+
+请求相对 A 起点的偏移（ms）：`5022, 9023, [28s 空窗], 37024, 41024, 45024`。空窗正好覆盖 hidden 段。**结论：hidden 期间 0 请求，恢复后立即恢复 4s 节奏。**
+
+**B-28（持续变化不抖动，60s，每 5s 改一条会话的 running/updatedAt）**：
+
+| 指标 | 空转 60s | 持续变化 60s |
+|---|---|---|
+| announce 次数 | 0（起点重置后）；文档旧基线为 1 | **12**（= 12 次变化） |
+| DOM 节点 `querySelectorAll("*")` | 2584 → 2584（Δ0） | 2584 → 2584（Δ**0**） |
+| Performance `Nodes` | 4379 → 4379（Δ0，20s 后稳定） | 4379 → 4379（Δ**0**） |
+| JSHeapUsedSize | ~28150 KB 平稳（首样本 58216 → 28151 是启动垃圾被回收） | 28287 → 28867 KB（Δ**+580**，锯齿：28312/28837/28327/28342/28342/28866） |
+
+**结论：announce 随变化线性增长（12 次变化 → 12 次 announce），但节点数完全不动、heap 只是 GC 锯齿（无单调上涨）。**
+
+**B-29（手动排序不被改写）**：写入 `localStorage["drh:order"]` = 前 5 组的逆序，切「手动排序」后跑 60s。
+
+- dragOrder = `[w:23a53601…, w:e6e6c101…, w:2f27655b…, w:42572e0a…, w:71ee0e97…]`
+- 切换后 orderBy = `manual`；before = `[w:23a53601…, w:e6e6c101…, w:2f27655b…, w:42572e0a…, w:71ee0e97…, w:70aa236c…]`
+- 60s 后 after = 与 before **逐项相同**（`JSON.stringify` 相等，69 组全量比较）
+- 与活跃度顺序不同（activeOrder 前 5 为 `w:71ee0e97…, w:42572e0a…, …`）；窗口内 announce 仅 1 次
+
+**结论：手动排序在 60s 轮询后不被活跃度改写。**
+
+**#5 shipped spinner 实测（关键差异，未改代码）**：用一次**真实本地 turn**（`session/create` + `session/prompt`，同一 lab）让 shipped 运行态出现，再量其 DOM：
+
+| 项 | shipped（本地 running 行，实测） | 我们远端行（实测） | 文档旧记录 |
+|---|---|---|---|
+| svg viewBox | `0 0 24 24` | `0 0 24 24` | `0 0 24 24` ✅ |
+| svg 属性 / 渲染尺寸 | 14 / 14×14 | 14 / 14×14 | 14 ✅ |
+| **circle r** | **9.5** | **9** | 9 ❌ |
+| circle cx/cy | 12 / 12 | 12 / 12 | ✅ |
+| **槽位 rect** | **16×20**（`.JoiKIa_slot`） | **14×14**（`.drh-stateDot`） | 14×14 ❌ |
+| stroke | rgb(129,133,140)，2px | 同 | ✅ |
+| arc dasharray | 动画采样值 `14.5328px, 150px`（随动画变化，非声明值） | `12, 150` | `12,150` ⚠️ |
+
+**两处真实差异：circle r 9.5（非 9）、槽位 16×20（非 14×14）。** dasharray 是动画中途采样，不能当声明值用。按任务要求只报数值、未改代码。
+
+**#6 左右并排截图：未交付（卡点）。** 两次尝试都拿到右侧（远端）与左侧（本地）的 clip，但在页面内用 `<img>` 合成后整幅截图是空白（疑与 `Emulation.setDeviceMetricsOverride` 和 `Page.captureScreenshot` 的 clip+scale 叠加有关）；第三次尝试单次 clip 同时覆盖两行时 CDP 报错退出。`/tmp/spinner-side-by-side.png` 存在但内容无效（1740×260 几乎全白），**不要当成证据使用**。下一步建议：分别用 `Page.captureScreenshot` 取两张 clip 后，用外部工具（如 `sips`/ImageMagick）离线拼接，避免页内合成。
