@@ -95,7 +95,11 @@
       built.createWebSocket = routeCreateWebSocket
       // Catch-all: a carrier that resolves the mux URL itself (a streamBaseUrl
       // deployment) constructs WebSocket directly and never calls our factory.
-      try {
+      // Replacing the global constructor is the most invasive hook we install, so
+      // it stays switchable: a carrier that already calls createWebSocket does not
+      // need it, and a native consumer that inspects the constructor can trip on a
+      // JS stand-in. `globalWebSocket: false` keeps the factory patch only.
+      if (GLOBAL_WS === true) try {
         var RoutedWebSocket = function (url, protocols) {
           if (isMuxUrl(String(url))) {
             note('ws-patched-mux', { url: String(url) })

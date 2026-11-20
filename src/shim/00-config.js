@@ -20,6 +20,8 @@
    * keeps the shipped socket untouched and only merges unary traffic.
    */
   var STREAMS = config.streams === true
+  /** The catch-all global WebSocket replacement; the carrier factory is always patched. */
+  var GLOBAL_WS = config.globalWebSocket !== false
   /**
    * `attach: 'remote'` turns this window into a thin client of the mounted host:
    * every /api call and every stream goes to the remote, so sessions, history and
