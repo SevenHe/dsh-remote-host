@@ -31,6 +31,21 @@
    * against an unreachable host. One send per second is enough to reconstruct a crash,
    * and a failing sink backs off instead of retrying at the same rate.
    */
+  /**
+   * Events that MUST leave the page immediately.
+   *
+   * The crash lands inside 0.7 s of the remote leg reopening, which is shorter than the
+   * batch (10 entries) and the one-per-second rate ceiling, so a batched send loses exactly
+   * the evidence that matters. These are forced out synchronously instead.
+   */
+  var TRACE_CRITICAL = {
+    'remote-open': true, 'reconnect-begin': true, 'reconnect-end': true,
+    'reconnect-nocarrier': true, 'replay-begin': true, 'replay-end': true,
+    'stream-open': true, 'service-register': true, 'crash-marker': true,
+  }
+  /** Last entries kept in a plain global, so an external poller survives a failed send. */
+  var TRACE_TAIL = 60
+  var traceTail = []
   var TRACE_MIN_INTERVAL_MS = 1000
   var TRACE_BACKOFF_MIN_MS = 2000
   var TRACE_BACKOFF_MAX_MS = 30000
@@ -75,19 +90,51 @@
   }
 
   /** Append one entry to the ring, flushing early once a batch is pending. */
+  /**
+   * Stable identity of THIS page instance.
+   *
+   * The trace file is shared by every instance on the machine (the desktop App, our labs,
+   * e2e runs), so a bare "failure" line cannot be attributed. The block stamps a per-instance
+   * id on its container; pairing it with the configured label makes each line attributable.
+   */
+  var traceInstance
+  function traceInstanceId() {
+    if (traceInstance !== undefined) return traceInstance
+    var label = typeof config.label === 'string' && config.label.length > 0 ? config.label : 'remote'
+    var inst = ''
+    try {
+      var element = document.getElementById('drh-remote-block')
+      if (element !== null && element !== undefined) inst = element.getAttribute('data-drh-inst') || ''
+    } catch (error) { inst = '' }
+    traceInstance = inst.length > 0 ? label + '#' + inst : label + '#-'
+    return traceInstance
+  }
+
   function traceEvent(name, detail) {
     if (TRACE !== true) return
     try {
       var entry = { t: Date.now(), name: typeof name === 'string' ? name.slice(0, 40) : 'event' }
+      entry.inst = traceInstanceId()
       var extra = traceDetail(detail)
       if (extra !== undefined) entry.detail = extra
       traceRing.push(entry)
       traceUnsent += 1
+      // Mirror into a global tail: the harness polls it every 250 ms, so the last entries
+      // survive even when the sink is rate limited and the page dies immediately after.
+      try {
+        traceTail.push(String(entry.t) + ' ' + entry.name + (entry.detail === undefined ? '' : ' ' + JSON.stringify(entry.detail).slice(0, 160)))
+        if (traceTail.length > TRACE_TAIL) traceTail.splice(0, traceTail.length - TRACE_TAIL)
+        globalThis.__DRH_TRACE_TAIL__ = traceTail
+      } catch (error) { /* the tail is best effort */ }
       if (traceRing.length > TRACE_LIMIT) {
         traceRing.splice(0, traceRing.length - TRACE_LIMIT)
         if (traceUnsent > traceRing.length) traceUnsent = traceRing.length
       }
-      if (traceUnsent >= TRACE_BATCH) traceFlush()
+      if (TRACE_CRITICAL[entry.name] === true) {
+        // Critical: ignore the rate ceiling for this one send.
+        traceNextAt = 0
+        traceFlush()
+      } else if (traceUnsent >= TRACE_BATCH) traceFlush()
     } catch (error) { /* tracing must never break the page */ }
   }
 
