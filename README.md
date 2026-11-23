@@ -384,7 +384,7 @@ against a live pair with the production config:
 
 ```
 local  /orchestrator/api/tickets → 404
-remote /orchestrator/api/tickets → 200 {"items":[{"title":"设计 example-mysql SQL 注入漏洞的自闭环方案…"}]}
+remote /orchestrator/api/tickets → 200 {"items":[{"title":"示例工单标题"}]}
 through the app:  200, 1 ticket, detailLoading:false
 ```
 
@@ -724,3 +724,9 @@ Verified against a real 0.2.2-rc.3 instance:
   forwarding or a trusted network when that hop is not already private.
 * The mount is only as safe as the local Host's own access policy — it is
   admitted by the same connection fence as `/api`.
+
+## 贡献与发布要求
+
+- 提交/发布前必须跑 `npm run check`（含敏感信息哨兵）并保持全绿；
+- 本仓库是公开仓库：文档、示例、测试数据里**禁止**真实内网地址、内部产品名、真实用户名与凭据，请用 `docs/sensitive-data.md` 中的占位符；
+- 已进入 git history 的敏感内容需要重写历史才能彻底清除，见 `docs/sensitive-data.md` 第 6 节。
