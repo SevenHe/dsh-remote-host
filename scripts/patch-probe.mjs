@@ -196,6 +196,22 @@ const HARNESS = `
       const rect = node.getBoundingClientRect()
       return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: Math.round(rect.width), right: Math.round(rect.right) }
     },
+    /**
+     * A point inside the row's title text, not the row centre. The trailing action
+     * cluster sits over the middle of a row, so a centre click lands on one of its
+     * buttons (elementFromPoint proves it) and a group row never expands.
+     */
+    titlePoint (selector) {
+      const node = document.querySelector(selector)
+      if (node === null) return null
+      const row = node.getBoundingClientRect()
+      const title = node.querySelector('.drh-title')
+      const titleRect = title === null ? null : title.getBoundingClientRect()
+      const x = titleRect !== null && titleRect.width > 8
+        ? Math.round(titleRect.left + Math.min(titleRect.width / 2, 40))
+        : Math.round(row.left + 28)
+      return { x, y: Math.round(row.top + row.height / 2), width: Math.round(row.width), right: Math.round(row.right) }
+    },
     setTitle (id, title) { this.sessions.find((s) => s.id === id).title = title; this.fire('sessions'); return true },
     setRunning (id, running) { this.sessions.find((s) => s.id === id).running = running; this.fire('sessions'); return true },
     setUpdated (id, at) { this.sessions.find((s) => s.id === id).updatedAt = at; this.fire('sessions'); return true },
@@ -233,9 +249,11 @@ async function main () {
   await cdp.evaluate("window.__probe.seed(); window.__probe.observe(); true")
   await sleep(300)
 
-  // Structural baseline: expand the only group with a real click.
-  let center = await cdp.evaluate("window.__probe.center('#drh-remote-block [data-drh-group=\"w:ws1\"]')")
+  // Structural baseline: expand the only group with a real click on its title area.
+  const center = await cdp.evaluate("window.__probe.titlePoint('#drh-remote-block [data-drh-group=\"w:ws1\"]')")
   if (center === null) fail("no group row to expand")
+  const aimedAt = await cdp.evaluate("(() => { const el = document.elementFromPoint(" + center.x + ", " + center.y + "); return el === null ? null : { tag: el.tagName, cls: String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className).slice(0, 60), inRow: el.closest('[data-drh-group]') !== null, inAction: el.closest('.drh-rowAction') !== null } })()")
+  console.log("  ..     group click point " + JSON.stringify(center) + " hits " + JSON.stringify(aimedAt))
   await cdp.click(center.x, center.y)
   await waitFor(cdp, "document.querySelectorAll('#drh-remote-block [data-drh-session]').length === 3", "three rows", 10000)
   await sleep(200)
