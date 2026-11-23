@@ -53,3 +53,35 @@ test('session/create: the synthetic claim workspace is created locally without i
   assert.equal(Object.prototype.hasOwnProperty.call(forwarded.payload.args.request, 'workspaceId'), false,
     'the claim workspaceId is dropped so the local Host can answer')
 })
+// --- the rpc carrier (desktop shell) must make the same decision -----------------------
+// The shell publishes a decoded carrier, and the shim wraps rpc.call instead of fetch. The
+// fetch-side fix alone would leave this path misrouting, so these two cases pin it.
+
+const rpcCreate = (page, payload) => page.built.rpc.call('/api', 'session/create', payload)
+
+test('rpc carrier: a local workspace create is not sent to the mount', async () => {
+  const page = createPage({ config: { group: 'none' }, localItems: LOCAL_ITEMS, remoteItems: REMOTE_ITEMS, rpc: true })
+  await page.settle()
+  const beforeMount = page.apiCalls('mount').length
+  await rpcCreate(page, { args: { request: { workspaceId: 'local-ws', sessionId: REMOTE_SESSION } } })
+  const mounted = page.apiCalls('mount').slice(beforeMount)
+  assert.deepEqual(mounted, [], 'the mount must not receive a create for a local workspace')
+  const seen = page.rpcCallsFor('session/create')
+  assert.equal(seen.length, 1, 'the local carrier answers the create')
+  assert.equal(seen[0].payload.args.request.workspaceId, 'local-ws')
+  assert.equal(seen[0].payload.args.request.sessionId, REMOTE_SESSION)
+})
+
+test('rpc carrier: the claim workspace create reaches the local carrier without workspaceId', async () => {
+  const page = createPage({ config: { group: 'none' }, localItems: LOCAL_ITEMS, remoteItems: REMOTE_ITEMS, rpc: true })
+  await page.settle()
+  const beforeMount = page.apiCalls('mount').length
+  await rpcCreate(page, { args: { request: { workspaceId: 'drh:claim' } } })
+  const mounted = page.apiCalls('mount').slice(beforeMount)
+  assert.deepEqual(mounted, [], 'no Host owns drh:claim, so the mount must not see it')
+  const seen = page.rpcCallsFor('session/create')
+  assert.equal(seen.length, 1, 'the create still happens, locally')
+  assert.equal(Object.prototype.hasOwnProperty.call(seen[0].payload.args.request, 'workspaceId'), false,
+    'the claim workspaceId is dropped before the local carrier sees it')
+  assert.equal(seen[0].channel, '/api')
+})

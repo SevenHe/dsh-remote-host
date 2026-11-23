@@ -67,6 +67,30 @@
     return remoteWorkspaceIds.has(raw) ? 'remote' : 'local'
   }
 
+  /**
+   * Copy a create payload without its workspaceId.
+   *
+   * The rpc carrier hands the payload object directly, so the claim rewrite has to build a
+   * new object instead of editing a JSON body (dropWorkspaceId does that for the fetch
+   * carrier). Only the request/args/payload objects are copied; the caller's payload is
+   * never mutated, because a carrier may reuse it.
+   * @returns the rewritten payload, or undefined when this is not a claim create.
+   */
+  function withoutWorkspaceId(payload) {
+    var request = createRequest(payload)
+    if (request === undefined || request.workspaceId !== CLAIM_WORKSPACE_ID) return undefined
+    var nextRequest = {}
+    for (var key in request) { if (Object.prototype.hasOwnProperty.call(request, key) && key !== 'workspaceId') nextRequest[key] = request[key] }
+    var args = payload.args
+    var nextArgs = {}
+    for (var argKey in args) { if (Object.prototype.hasOwnProperty.call(args, argKey)) nextArgs[argKey] = args[argKey] }
+    nextArgs.request = nextRequest
+    var nextPayload = {}
+    for (var field in payload) { if (Object.prototype.hasOwnProperty.call(payload, field)) nextPayload[field] = payload[field] }
+    nextPayload.args = nextArgs
+    return nextPayload
+  }
+
   /** Whether a create names the synthetic claim Workspace, which no Host can resolve. */
   function isClaimCreate(payload) {
     var request = createRequest(payload)

@@ -48,6 +48,39 @@
   }
 
   /**
+   * Router scope audit (2026-11-23).
+   *
+   * refersRemote() decides by "does the payload text contain a known remote id", which is
+   * only correct when that id is the call's SUBJECT. The cases below are the ones whose
+   * scope is an explicit field, so a substring hit is an accident rather than an identity:
+   *
+   *   session/create        workspace-scoped  -> now decided by createTarget() (fixed here)
+   *   workspace/{rename,delete,insertBefore,insertSessionBefore}
+   *                         workspace-scoped  -> still substring. Works today only because a
+   *                         remote workspace is published as drh:<raw> and <raw> is in
+   *                         remoteWorkspaceIds, so the text contains the raw id; a local
+   *                         workspace id cannot contain it. Same shape of fragility as the
+   *                         create bug: prefer workspaceId here next.
+   *   directoryPicker/*     path-scoped       -> no ids in the payload, never routed.
+   *   session/{follow,events,state,page,projections,prompt,cancel,rename,fork,updateQueue,
+   *   wait,attachment,selectModel}
+   *                         session-scoped    -> correct by substring: the id named IS the
+   *                         subject, including the address.sessionId form.
+   *   session/list, $events, $events/result
+   *                         special-cased     -> merge / forwarded-event rewrite, not this rule.
+   *   settings/*, pluginManager/*, pluginInventory/*, agentPresets/list,
+   *   permissionPresets/catalog, skills/list, schedule/*, speech/*, messageFeedback/*,
+   *   workspaceFiles/*
+   *                         host-global       -> no session/workspace subject, so they can
+   *                         only be misrouted by an id appearing inside a path or title.
+   *                         Left as-is; a workspaceFiles path containing a session id is the
+   *                         realistic case to tighten later.
+   *
+   * Only session/create is changed in this commit; the rest is registered so the next pass
+   * can move them to explicit-field decisions without rediscovering the list.
+   */
+
+  /**
    * Whether this call is rerouted away from the local Host. Only a reroute may
    * fall back to a second, local attempt: a pass-through request that fails has
    * already reached the Host once, and retrying it would duplicate POSTs.
