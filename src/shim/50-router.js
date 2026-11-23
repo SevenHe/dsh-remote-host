@@ -126,6 +126,12 @@
      * though the first frames had already arrived.
      */
     var remoteStreams = new Map()
+    /** First moment the remote leg became unusable in the current outage; 0 while healthy. */
+    var remoteUnavailableSince = 0
+    /** True once the mux was handed back to the shipped client for this outage. */
+    var degraded = false
+    /** Timer for the per-attempt open watchdog. */
+    var attemptTimer
     /** Suppress reconnect attempts once the browser is closing this socket. */
     var shuttingDown = false
     /** Consecutive failed reconnects, for backoff and the error status. */
@@ -144,6 +150,14 @@
     /** First reconnect delay and its ceiling; see reconnectBackoff. */
     var RECONNECT_BASE_MS = 200
     var RECONNECT_CAP_MS = 10000
+    /**
+     * How long the remote leg may stay unusable before the mux is handed back.
+     * A flapped connection used to end with a dead renderer 5.8-6.0 s after the outage began,
+     * which is also about the cumulative reconnect backoff (200+400+800+1600+3200).
+     */
+    var DEGRADE_AFTER_MS = 6000
+    /** An attempt that neither opens nor errors within this window counts as a failure. */
+    var ATTEMPT_TIMEOUT_MS = 2500
 
     function connect(kind) {
       var existing = upstreams.get(kind)
@@ -174,6 +188,7 @@
       on('open', function () {
         note('leg-opened', { kind: kind })
         publishStatus(kind, 'open')
+        if (kind === 'remote') noteRemoteAvailable()
       })
       // A leg that never opens must be distinguishable from one that opens and
       // then goes quiet, so sample its state instead of waiting forever.
@@ -185,10 +200,12 @@
       on('error', function (event) {
         note('leg-error', { kind: kind, message: String((event && (event.message || event.type)) || 'error') })
         publishStatus(kind, 'error')
+        if (kind === 'remote') noteRemoteUnavailable('error')
       })
       on('close', function (event) {
         note('leg-closed', { kind: kind, code: (event && event.code) || 0 })
         if (kind !== 'local') publishStatus(kind, 'error')
+        if (kind === 'remote') noteRemoteUnavailable('close')
       })
       on('message', function (event) {
         relays[kind] = (relays[kind] || 0) + 1
@@ -467,8 +484,60 @@
      * cannot even be constructed must wait for the next backoff step rather than
      * re-entering this function — that recursion is what wedged the renderer.
      */
+    /**
+     * Record that the remote leg is unusable right now, and hand the mux back once the outage
+     * outlives DEGRADE_AFTER_MS.
+     *
+     * The trigger is event driven on purpose: on the flap that kills the renderer, connect()
+     * returns a socket that fails asynchronously, so counting synchronous throws never fires.
+     */
+    function noteRemoteUnavailable(reason) {
+      if (degraded === true) return
+      var now = Date.now()
+      if (remoteUnavailableSince === 0) remoteUnavailableSince = now
+      var unavailableMs = now - remoteUnavailableSince
+      traceEvent('remote-unavailable', { reason: reason, ms: unavailableMs })
+      if (unavailableMs > DEGRADE_AFTER_MS) degrade()
+    }
+
+    /** The remote leg opened: the outage is over, so the clock resets. */
+    function noteRemoteAvailable() {
+      if (remoteUnavailableSince !== 0) traceEvent('remote-available', { afterMs: Date.now() - remoteUnavailableSince })
+      remoteUnavailableSince = 0
+      degraded = false
+    }
+
+    /**
+     * Hand the mux back to the shipped client instead of holding its socket open.
+     *
+     * While the remote leg is unusable this router keeps the page socket open, so the shipped
+     * connection layer never sees a failure it can react to: its services stay unavailable and
+     * a flapped connection ended with a dead renderer (reproduced: exitCode 5 = SIGTRAP, and it
+     * does not happen with streams disabled). Closing the socket makes the outage visible and
+     * lets the client's own reconnect take over; no new WebSocket is opened until a fresh mux
+     * connection builds a new router.
+     */
+    function degrade() {
+      if (degraded === true) return
+      degraded = true
+      reconnectPending = false
+      if (reconnectTimer !== undefined) {
+        try { clearTimeout(reconnectTimer) } catch (error) { /* already gone */ }
+        reconnectTimer = undefined
+      }
+      if (attemptTimer !== undefined) {
+        try { clearTimeout(attemptTimer) } catch (error) { /* already gone */ }
+        attemptTimer = undefined
+      }
+      traceEvent('degrade-handoff', { unavailableMs: Date.now() - remoteUnavailableSince })
+      note('degrade: handing the mux back after ' + String(Date.now() - remoteUnavailableSince) + ' ms unavailable')
+      publishStatus('remote', 'error')
+      try { client.close() } catch (error) { /* the page reconnects on its own */ }
+    }
+
     function reconnectRemote() {
       if (shuttingDown === true) return
+      if (degraded === true) return
       if (reconnectPending === true) return
       // Depth counter: a synchronous re-entry chain is invisible in the trace otherwise,
       // and it is exactly what a crashing flap looks like.
@@ -494,8 +563,23 @@
           reconnectRemote()
           return
         }
+        if (attemptTimer !== undefined) {
+          try { clearTimeout(attemptTimer) } catch (error) { /* already gone */ }
+        }
+        if (typeof setTimeout === 'function') {
+          attemptTimer = setTimeout(function () {
+            attemptTimer = undefined
+            if (socket !== undefined && socket.readyState === 1) return
+            noteRemoteUnavailable('attempt-timeout')
+          }, ATTEMPT_TIMEOUT_MS)
+        }
         var onOpen = function () {
           reconnectAttempts = 0
+          if (attemptTimer !== undefined) {
+            try { clearTimeout(attemptTimer) } catch (error) { /* already gone */ }
+            attemptTimer = undefined
+          }
+          noteRemoteAvailable()
           traceEvent('remote-open', { streams: remoteStreams.size })
           replayRemoteStreams()
           traceEvent('replay-done', { streams: remoteStreams.size })
