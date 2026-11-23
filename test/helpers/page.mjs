@@ -85,7 +85,10 @@ export function createPage(options = {}) {
   })
 
   async function fetchImpl(input, init) {
-    const url = typeof input === 'string' ? input : String(input?.url ?? input)
+    const rawUrl = typeof input === 'string' ? input : String(input?.url ?? input)
+    // A mount call can fail the way a corporate-network blip does.
+    if (options.failMountFetch === true && rawUrl.includes(String(config.mount))) throw new Error('network blip')
+    const url = rawUrl
     // Normalize to one absolute-looking path: the shim calls both 'api/x' (page
     // relative) and '/devbox/api/x' (the mount), and assertions want one form.
     const path = '/' + url.replace(/^https?:\/\/[^/]+/, '').replace(/^\/+/, '')
@@ -195,6 +198,8 @@ export function createPage(options = {}) {
   const rpcCalls = []
   const rpcCall = async (channel, endpoint, payload) => {
     rpcCalls.push({ channel, endpoint, payload })
+    // A blip fails every leg; a caller must degrade, not reject.
+    if (options.rpcFail === true) throw new Error('mount unreachable')
     if (endpoint === 'session/list') return envelope({ items: localItems })
     return envelope({})
   }
@@ -253,6 +258,7 @@ export function createPage(options = {}) {
     apiCalls: (kind) => calls[kind].filter((path) => path.includes('/api/')),
     /** Calls the seeded rpc carrier received, in order. */
     rpcCalls,
+    options,
     /** rpc carrier calls for one endpoint. */
     rpcCallsFor: (endpoint) => rpcCalls.filter((entry) => entry.endpoint === endpoint),
     /** Frames the router sent to one upstream leg. */

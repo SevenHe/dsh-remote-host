@@ -68,6 +68,8 @@
 
 1. **`/tmp/dsh-remote-host.log` 不能用于历史时间相关性**：它在每次插件加载时被重写，且**多实例共用同一路径**。我 lab 的 03:35 记录已消失；当前最早记录是 03:41:59 且 `sshHost` 是别的探针写的 `no-such-host-drh-probe`。崩溃时刻（03:15/03:17/03:32/03:34 UTC）**没有任何**该文件记录 —— 这是**缺失**，不是「没有发生」。
 2. **App 自带 crash log（`~/Library/Logs/DeepSeek Harness/crash-*-renderer.log`）**：只记录 `Desktop renderer exited: crashed` + `(no error-level renderer console output was captured)`，其余是插件操作历史（文件自身标注 "context, not proof of cause"）。拿不到 V8 文本。
+
+> 1.14.7 起插件的面包屑会捕获页面 `error`/`unhandledrejection`/`console.error`（立即上报、上限 20 条/次加载），是这条应用日志缺失证据的补充来源，见 `src/shim/05-trace.js`。
 3. **统一日志（`log show`）**：崩溃窗口内没有任何 V8 Fatal/Check 文本（lead 已验，与此一致）。
 
 ## 6. 下一步需要什么（按信息量排序）

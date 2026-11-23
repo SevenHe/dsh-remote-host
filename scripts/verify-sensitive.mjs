@@ -128,8 +128,22 @@ const rules = [
   },
 ]
 
-const files = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" })
-  .split("\u0000")
+/**
+ * Scan tracked files AND untracked-but-not-ignored ones.
+ *
+ * `git ls-files` alone only sees what is already staged or committed, so a brand new
+ * document could carry internal information straight through the gate: measured by
+ * adding a file with a personal home path and a real integer address, where the first
+ * run (before `git add`) reported zero hits. A leak must be caught before it is staged,
+ * not after, so the untracked set is scanned too.
+ */
+function listFiles(args) {
+  return execFileSync("git", args, { encoding: "utf8" }).split("\u0000")
+}
+const files = Array.from(new Set([
+  ...listFiles(["ls-files", "-z"]),
+  ...listFiles(["ls-files", "--others", "--exclude-standard", "-z"]),
+]))
   .filter((file) => file.length > 0 && SKIP.has(file) !== true)
 
 const hits = []

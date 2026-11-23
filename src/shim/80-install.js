@@ -130,20 +130,56 @@
     // has to wrap it too or nothing below would ever run.
     if (diag.hasRpc === true && typeof base.rpc.call === 'function') {
       var baseRpc = base.rpc
+      /**
+       * A mount failure as a carrier result. Every branch below returns this instead of
+       * letting the promise reject: the shipped Client treats a rejection as a crashing
+       * service call, and a corp-network blip reaches this path on every remote call.
+       */
+      var carrierUnavailable = function (endpoint, error) {
+        note('carrier-failed', { method: endpoint, error: String(error).slice(0, 80) })
+        return {
+          ok: false,
+          error: {
+            code: 'gateway/carrier-unavailable',
+            message: 'drh: the local carrier failed for ' + endpoint,
+            details: {},
+          },
+        }
+      }
+      var remoteUnavailable = function (endpoint, error) {
+        note('route-remote-failed', { method: endpoint, error: String(error).slice(0, 80) })
+        return {
+          ok: false,
+          error: {
+            code: 'gateway/remote-unavailable',
+            message: 'drh: the mounted host is unreachable for ' + endpoint,
+            details: {},
+          },
+        }
+      }
       built.rpc = {
         call: function (channel, endpoint, payload, signal) {
           if (endpoint === 'session/list') {
             return Promise.all([
-              baseRpc.call(channel, endpoint, payload, signal),
+              // The local leg can fail too on a shell whose carrier travels the network.
+              baseRpc.call(channel, endpoint, payload, signal).catch(function () { return undefined }),
               remoteUnary(endpoint, payload, signal).catch(function () { return undefined }),
             ]).then(function (both) {
               var localResult = both[0]
               var remoteResult = both[1]
               if (remoteResult === undefined || remoteResult === null || remoteResult.ok !== true) {
                 note('list-merge-skipped', { reason: 'remote unavailable' })
-                return localResult
+                // The local half is the answer when it exists. When it does not, say so:
+                // resolving undefined leaves the Client unable to render anything.
+                if (localResult !== undefined && localResult !== null) return localResult
+                return remoteUnavailable(endpoint, 'neither leg answered')
               }
-              if (localResult === null || typeof localResult !== 'object' || localResult.ok !== true) return localResult
+              if (localResult === null || typeof localResult !== 'object' || localResult.ok !== true) {
+                // Only the remote half answered: serve it rather than resolving to nothing.
+                if (remoteResult.ok === true) return remoteResult
+                // Both legs failed (a blip reaches the local carrier on some shells too).
+                return remoteUnavailable(endpoint, 'local and mounted host both unavailable')
+              }
               var merged = mergeListValues(localResult.value, remoteResult.value)
               note('list-merge', { local: merged.localCount, remote: merged.remoteCount, visibleRemote: merged.visibleRemote })
               return { ok: true, value: merged.value }
@@ -157,11 +193,15 @@
           if (endpoint === 'session/create') {
             if (createTarget(payload) === 'remote') {
               note('route-remote', { endpoint: endpoint })
-              return remoteUnary(endpoint, payload, signal)
+              return remoteUnary(endpoint, payload, signal).catch(function (error) {
+                return remoteUnavailable(endpoint, error)
+              })
             }
             var claimless = withoutWorkspaceId(payload)
             if (claimless !== undefined) note('claim-create-local', { endpoint: endpoint })
-            return baseRpc.call(channel, endpoint, claimless === undefined ? payload : claimless, signal)
+            return baseRpc.call(channel, endpoint, claimless === undefined ? payload : claimless, signal).catch(function (error) {
+              return carrierUnavailable(endpoint, error)
+            })
           }
           // The shell decodes this carrier instead of fetch, and it asks for the catalogue the
           // same way, so the owner decision has to exist here too.
@@ -169,17 +209,28 @@
           if (endpoint === 'session/modelCatalog') {
             var ownedByMount = catalogOwnedByMount()
             note('catalog-owner', { remote: ownedByMount, carrier: 'rpc' })
-            if (ownedByMount !== true) return baseRpc.call(channel, endpoint, payload, signal)
+            if (ownedByMount !== true) {
+              return baseRpc.call(channel, endpoint, payload, signal).catch(function (error) {
+                return carrierUnavailable(endpoint, error)
+              })
+            }
             return remoteUnary(endpoint, payload, catalogSignal(signal)).catch(function () {
               note('route-local-fallback', { method: endpoint, reason: 'mount failed' })
-              return baseRpc.call(channel, endpoint, payload, signal)
+              // The fallback itself can fail: answer a carrier result rather than reject.
+              return baseRpc.call(channel, endpoint, payload, signal).catch(function (error) {
+                return carrierUnavailable(endpoint, error)
+              })
             })
           }
           if (refersRemote(payload)) {
             note('route-remote', { endpoint: endpoint })
-            return remoteUnary(endpoint, payload, signal)
+            return remoteUnary(endpoint, payload, signal).catch(function (error) {
+              return remoteUnavailable(endpoint, error)
+            })
           }
-          return baseRpc.call(channel, endpoint, payload, signal)
+          return baseRpc.call(channel, endpoint, payload, signal).catch(function (error) {
+            return carrierUnavailable(endpoint, error)
+          })
         },
       }
       if (typeof baseRpc.open === 'function') built.rpc.open = baseRpc.open
