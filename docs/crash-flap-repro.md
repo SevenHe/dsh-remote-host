@@ -107,3 +107,42 @@ bash /tmp/dsh-c4-flap.sh          # 代理 + lab + harness + flap 序列，一�
 - harness 用私有副本 `/tmp/dsh-elec-app-c4`；**共享的 `/tmp/dsh-elec-app`、`/tmp/dsh-elec-run` 未改动**。
 - 未 kill / 未 attach 用户桌面 App；未动远端 runtime。
 - 收尾需 kill：`pkill -f 'profile c4flap'`、`pkill -f dsh-tcproxy.js`、`pkill -f dsh-elec-app-c4`。
+
+## 9. 关键对照实验：一直不可达 **不崩**（决定性地缩小范围）
+
+为区分「远端不可达」与「不可达后恢复（transition）」，做了对照：
+
+| 组 | 条件 | 时长 | 结果 |
+| --- | --- | --- | --- |
+| **flap**（§2） | 一直可达 → blackhole 3s/5s/1s → 恢复 | 79 s flap + 12 s 预热 | **2 次 RENDER_GONE**（exitCode 5 / SIGTRAP），第一次在恢复后 0.8 s |
+| **dead**（本节） | ``upstream`` 指向 ``127.0.0.1:19994``（无人监听，全程不可达，无 flap） | 100 s | **0 次崩溃**（``timeup crashes=0``），boots 恒 1 |
+
+原始证据（dead 组）：
+``
+16:44:12 control begin (permanently unreachable, 100s)
+[harness exit 0] 16:45:52
+=== crashes ===
+0
+sample {"nodes":1331,"block":1,"boots":1,"memory":{"used":39943634,...}}
+timeup crashes=0
+``
+
+**结论**：崩溃**不是**「连不上远端」造成的，而是**「连上过 → 断开 → 再恢复」这个状态迁移**造成的。
+这把范围压到 shim 的**重连/恢复路径**（不是首次连接、也不是纯失败路径）。
+
+**诚实标注一个混杂因素**：dead 组从启动起就没有数据（``nodes=1331``、``groups=0``），
+而 flap 组崩溃前已加载真实数据（``nodes=2485``、groups→71）。所以严格说两组的差异是
+「**先有数据、再丢失并恢复**」vs「**从未有数据**」，不能完全排除「必须先建立过 mount 会话」这一前提。
+要彻底拆开，需要第三组：**先正常连上拿到数据，再永久 blackhole（不恢复）**。
+
+## 10. 修复方向（按本轮证据重排）
+
+| 方向 | 本轮是否支持 | 依据 |
+| --- | --- | --- |
+| ①未处理 promise rejection | **证据不足** | flap 窗口内 ``renderer-trace.log`` 只有 1 条 failure（``snapshot store 'dsh.sessions.current' rehydration failed``），没有 rejection 风暴 |
+| ②服务重注册风暴（``conversation service unavailable``） | **本轮未观察到** | flap 窗口内没有该 console-error；它只出现在 16:00/16:06 那个归属存疑的窗口 |
+| ③**重连/恢复期同步重入或状态机缺陷** | **最受支持** | 「一直不可达不崩、断开再恢复必崩」+ 崩溃精确落在恢复后 0.8 s + V8 trap 且**不打印 fatal**（典型于生成代码里的 CHECK/栈守卫，而非显式 V8_Fatal） |
+
+**建议的最小验证**：在 shim 重连路径加 ``traceEvent('reconnect-begin'/'reconnect-end')`` + 递归深度计数，
+下一轮 flap 时看崩溃前 2 秒是否有高频重连或深递归；若确认，修法是 close/error 回调里**去抖 + 不在同步栈内 re-open**
+（异步排一拍，并加 in-flight 标记）。
