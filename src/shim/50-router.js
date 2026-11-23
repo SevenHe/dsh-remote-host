@@ -66,8 +66,11 @@
         }
       }).then(function () {
         remoteSessionsInFlight = false
+        // The first answer (success or failure) is what the catalogue owner decision waits for.
+        markRemoteSnapshotSettled()
       }, function (error) {
         remoteSessionsInFlight = false
+        markRemoteSnapshotSettled()
         note('sessions-refresh-failed', { error: String(error).slice(0, 90) })
       })
     } catch (error) { remoteSessionsInFlight = false }

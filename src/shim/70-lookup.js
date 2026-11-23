@@ -38,10 +38,15 @@
       publishRemoteState()
       refreshGroups()
     }
-      }).catch(function (error) {
+      }).then(function () {
+        // This prefetch IS the first remote snapshot: the model-catalogue owner decision
+        // waits on it, so it must settle even when the mount answered nothing.
+        markRemoteSnapshotSettled()
+      }, function (error) {
+        markRemoteSnapshotSettled()
         note('prefetch-failed', { error: String(error).slice(0, 90) })
       })
-    } catch (error) { /* prefetch is best effort */ }
+    } catch (error) { markRemoteSnapshotSettled() /* prefetch is best effort */ }
   }
 
   /**

@@ -143,8 +143,17 @@
    * it is selected. The owner is decided by catalogOwnedByMount(); when the answer must come
    * from the mount, the read is bounded and degrades to this host.
    */
-  function routeModelCatalog(input, init) {
+  async function routeModelCatalog(input, init) {
     var remote = catalogOwnedByMount()
+    if (remote !== true && remoteFocused() !== true && persistedCurrentSessionId().length > 0) {
+      // Cold start: the client asks for the catalogue before the mount's first snapshot has
+      // landed, so the persisted Session cannot be classified yet. Waiting for that snapshot
+      // (bounded, and it is already in flight) makes the decision correct instead of falling
+      // back to this host and leaving a remote Session without its model.
+      var settled = await remoteSnapshotSettledWithin(CATALOG_READ_TIMEOUT_MS)
+      remote = catalogOwnedByMount()
+      note('catalog-waited-snapshot', { settled: settled, remote: remote })
+    }
     note('catalog-owner', { remote: remote, focus: remoteFocused(), persisted: persistedCurrentSessionIsRemote() })
     if (remote !== true) return localFetch(input, init)
     var bounded = {}

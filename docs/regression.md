@@ -394,3 +394,32 @@ POST /devbox/api/session/create
 | 宿主全局（风险） | `settings/*`、`pluginManager/*`、`pluginInventory/*`、`agentPresets/list`、`permissionPresets/catalog`、`skills/list`、`schedule/*`、`speech/*`、`messageFeedback/*`、`workspaceFiles/*` | 无会话/工作区主体，只有「路径或标题里恰好出现某个 id」才会误路由；保持现状，`workspaceFiles` 的路径含 id 是最现实的一条 |
 
 `npm run check`：51/51。
+
+## 远端会话模型位显示「请选择模型」的根因与实测（2026-11-23）
+
+**现象**：打开远端会话后模型位显示「请选择模型」，会话其实有已保存的选择（`cpa/deepseek-v4.1-flash`）。
+
+**根因（两处，都在 shim）**：
+
+1. **选择不可见**：`publishRemoteSessions`（`src/shim/10-state.js`）构造客户端注入 catalog 用的 summary 时只保留 `id/title/updatedAt/running/cwd/blank/parentSessionId/formatStatus/asOfSeq`，把远端 `session/list` 行的 `projections` 整个丢了 → 注入行没有 `projections.values.modelSelection` → 模型位无值。
+2. **目录没有归属**：客户端真正调的是 `session/modelCatalog`（无参数），而旧实现猜的是 `llm/listProviders|llm/listConfigurableProviders|llm/discoverModels`（已删）。且客户端**每次页面加载只取一次目录，并且早于会话恢复**，所以请求里没有任何 session id 可用来路由 → 目录永远来自本机，远端选择（远端独有 id）解析不到。
+
+**修法**：
+
+- A：entry 增加 `projections` 透传（`projectionsForPublish`，上限 **8 KiB**；超限只保留 `modelSelection/agentPreset/title`）。合并后的 `session/list` 远端行本来经 `labelRemoteItem` 保留 projections。
+- B：**不做并集**（两端模型 list 允许不同，并集会让本地会话看到远端独有模型、反之亦然，选中即报错）。`session/modelCatalog` 按「当前会话所属宿主」决定来源：① 远端焦点（已有请求带远端 id）→ mount；② 冷启动用持久化线索 `localStorage["dsh.sessions.current"]`（兼容 `{sessionId}` JSON 与裸串两种形态）配合 `remoteSessions` 判定 → 远端则 mount；③ 否则本机。冷启动时目录请求早于首个远端快照，shim 会**等首个快照落定（有界）**再判定。mount 侧读取 `AbortSignal.timeout(2500)`，**拒绝或非 2xx 都降级本机**。rpc 载体同判。
+
+### 已知限制（重要）
+
+**同一次页面生命周期内切换宿主（本地 ↔ 远端）后，模型目录仍是上一次的，必须重载页面才会切换。** 原因是客户端「启动取一次目录并全程缓存，且早于会话恢复」，shim 无法强制它重取。验收请以「重载后正确」为准。
+
+### 实测（lab 19987，插件指向本分支，upstream 为真实 devbox，headless Chrome + CDP）
+
+| 断言 | 原始数据 |
+|---|---|
+| ① 重载后打开远端会话：占位消失、模型位可用 | `composerCard = "发消息或创建任务, / 调用指令, @ 文件或对话 完全权限 DeepSeek V4.1 Flash (CPA) Max"`，`placeholderInCard = false`；mount 目录里 cpa 组**只有** `deepseek-v4.1-flash`，故无占位即证明按远端条目解析成功 |
+| ② 该次目录走 MOUNT | 冷启动 `catalogHits = ["MOUNT","MOUNT"]`（持久化当前会话为远端 worker 时） |
+| ③ 本地会话行为不变 | 冷启动 `catalogHits = ["LOCAL","LOCAL"]`，目录 default `cpa/modelhub-deepseek-v4.1-flash`（5 个模型），本地会话模型位 `DeepSeek V4.1 Flash (CPA) Max` |
+| ④ mount 不可达：降级 + 无风暴 + 无 unhandled rejection | 用 CDP 阻断 `*/devbox/api/session/modelCatalog*` 后重载：目录返回本机（default `modelhub-deepseek-v4.1-flash`，5 模型）；请求序列 `MOUNT,LOCAL,MOUNT,LOCAL,LOCAL`（尝试+降级），4 秒后**不再增长**；`Runtime.exceptionThrown` 与 console error 均为 **0** |
+
+远端行透传实测：112 条远端会话中 **60 条**带 `projections.values.modelSelection`（例 `{"lastUsed":{"provider":"cpa","model":"deepseek-v4.1-flash","reasoningEffort":"max"}}`）。

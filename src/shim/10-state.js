@@ -136,6 +136,41 @@
   }
 
   /**
+   * Whether the first remote session snapshot has settled (succeeded or failed).
+   *
+   * The client asks for the model catalogue before the mount's first session/list lands, so
+   * a persisted remote Session cannot be recognised at that instant. Waiting for this signal
+   * (bounded) turns "unknown, assume this host" into the correct owner without a re-fetch.
+   */
+  var remoteSnapshotSettled = false
+  var remoteSnapshotWaiters = []
+
+  /** Mark the first snapshot settled and release anyone waiting on it. */
+  function markRemoteSnapshotSettled() {
+    if (remoteSnapshotSettled === true) return
+    remoteSnapshotSettled = true
+    var waiters = remoteSnapshotWaiters
+    remoteSnapshotWaiters = []
+    for (var index = 0; index < waiters.length; index += 1) {
+      try { waiters[index](true) } catch (error) { /* a waiter must never break the refresh */ }
+    }
+  }
+
+  /**
+   * @param budgetMs - how long the caller may block for the first snapshot.
+   * @returns true when it settled, false on timeout or without a timer.
+   */
+  function remoteSnapshotSettledWithin(budgetMs) {
+    if (remoteSnapshotSettled === true) return Promise.resolve(true)
+    return new Promise(function (resolve) {
+      var done = false
+      var finish = function (value) { if (done === true) return; done = true; resolve(value) }
+      remoteSnapshotWaiters.push(finish)
+      try { globalThis.setTimeout(function () { finish(false) }, budgetMs) } catch (error) { finish(false) }
+    })
+  }
+
+  /**
    * Whether the Session the client persisted as "current" belongs to the mounted host.
    *
    * The catalogue request happens before the client restores that Session, so at a cold
@@ -145,22 +180,24 @@
    * unknown is treated as local, which keeps a local Session's behaviour unchanged.
    * @returns true only when the persisted id is a Session this shim already knows is remote.
    */
-  function persistedCurrentSessionIsRemote() {
+  function persistedCurrentSessionId() {
     try {
       var storage = globalThis.localStorage
-      if (storage === null || storage === undefined || typeof storage.getItem !== 'function') return false
+      if (storage === null || storage === undefined || typeof storage.getItem !== 'function') return ''
       var raw = storage.getItem('dsh.sessions.current')
-      if (typeof raw !== 'string' || raw.length === 0) return false
-      var sessionId = raw
-      if (raw.charAt(0) === '{') {
-        var parsed = JSON.parse(raw)
-        sessionId = parsed !== null && typeof parsed === 'object' && typeof parsed.sessionId === 'string' ? parsed.sessionId : ''
-      }
-      if (typeof sessionId !== 'string' || sessionId.length === 0) return false
-      return remoteSessions.has(sessionId) === true
+      if (typeof raw !== 'string' || raw.length === 0) return ''
+      if (raw.charAt(0) !== '{') return raw
+      var parsed = JSON.parse(raw)
+      return parsed !== null && typeof parsed === 'object' && typeof parsed.sessionId === 'string' ? parsed.sessionId : ''
     } catch (error) {
-      return false
+      return ''
     }
+  }
+
+  /** Whether the persisted current Session is one this shim already knows is remote. */
+  function persistedCurrentSessionIsRemote() {
+    var sessionId = persistedCurrentSessionId()
+    return sessionId.length > 0 && remoteSessions.has(sessionId) === true
   }
 
   /**
