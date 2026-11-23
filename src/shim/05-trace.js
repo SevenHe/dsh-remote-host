@@ -75,10 +75,31 @@
   }
 
   /** Append one entry to the ring, flushing early once a batch is pending. */
+  /**
+   * Stable identity of THIS page instance.
+   *
+   * The trace file is shared by every instance on the machine (the desktop App, our labs,
+   * e2e runs), so a bare "failure" line cannot be attributed. The block stamps a per-instance
+   * id on its container; pairing it with the configured label makes each line attributable.
+   */
+  var traceInstance
+  function traceInstanceId() {
+    if (traceInstance !== undefined) return traceInstance
+    var label = typeof config.label === 'string' && config.label.length > 0 ? config.label : 'remote'
+    var inst = ''
+    try {
+      var element = document.getElementById('drh-remote-block')
+      if (element !== null && element !== undefined) inst = element.getAttribute('data-drh-inst') || ''
+    } catch (error) { inst = '' }
+    traceInstance = inst.length > 0 ? label + '#' + inst : label + '#-'
+    return traceInstance
+  }
+
   function traceEvent(name, detail) {
     if (TRACE !== true) return
     try {
       var entry = { t: Date.now(), name: typeof name === 'string' ? name.slice(0, 40) : 'event' }
+      entry.inst = traceInstanceId()
       var extra = traceDetail(detail)
       if (extra !== undefined) entry.detail = extra
       traceRing.push(entry)
