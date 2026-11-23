@@ -190,6 +190,31 @@
     } catch (error) { /* ignore */ }
   }
 
+  /** Failures are capped per page load, so a loop cannot turn them into a storm. */
+  var TRACE_FAILURE_LIMIT = 20
+  var traceFailures = 0
+
+  /**
+   * Record one JS-level failure and send it immediately.
+   *
+   * The desktop crash log says "no error-level renderer console output was captured" for
+   * every renderer death, so the one artefact a V8 abort leaves behind — the page telling
+   * us what was wrong — was being thrown away. Capturing it here is the only channel that
+   * outlives the renderer, because the Host writes it to disk. The one-per-second ceiling
+   * is bypassed (the page may not live to see the next window) but a hard cap keeps a
+   * failure loop from becoming the storm that ceiling exists to prevent.
+   */
+  function traceFailure(kind, detail) {
+    if (TRACE !== true) return
+    try {
+      if (traceFailures >= TRACE_FAILURE_LIMIT) return
+      traceFailures += 1
+      traceEvent('failure', Object.assign({ kind: kind, n: traceFailures }, detail))
+      traceNextAt = 0
+      traceFlush()
+    } catch (error) { /* tracing must never break the page */ }
+  }
+
   /** Periodic heap/size sample, so a crash has a 'how big was it' data point. */
   function traceHeartbeat() {
     try {
@@ -253,6 +278,46 @@
           if (document.visibilityState === 'hidden') traceFlush()
         })
       }
+      // The three ways a page reports its own trouble.
+      try {
+        if (typeof globalThis.addEventListener === 'function') {
+          globalThis.addEventListener('error', function (event) {
+            var record = event === null || typeof event !== 'object' ? {} : event
+            traceFailure('error', {
+              message: String(record.message === undefined ? '' : record.message).slice(0, 120),
+              source: String(record.filename === undefined ? '' : record.filename).slice(-60),
+              line: typeof record.lineno === 'number' ? record.lineno : undefined,
+            })
+          })
+          globalThis.addEventListener('unhandledrejection', function (event) {
+            var reason = event === null || typeof event !== 'object' ? undefined : event.reason
+            var text = typeof reason === 'string'
+              ? reason
+              : String(reason !== null && reason !== undefined && reason.message !== undefined ? reason.message : reason)
+            traceFailure('rejection', { message: text.slice(0, 120) })
+          })
+        }
+      } catch (error) { /* ignore */ }
+      // console.error is where the shell reports its own failures.
+      try {
+        var consoleBase = globalThis.console
+        if (consoleBase !== undefined && consoleBase !== null && typeof consoleBase.error === 'function') {
+          var consoleErrorBase = consoleBase.error
+          consoleBase.error = function () {
+            try {
+              var parts = []
+              for (var argIndex = 0; argIndex < arguments.length && argIndex < 3; argIndex += 1) {
+                var value = arguments[argIndex]
+                if (typeof value === 'string') parts.push(value)
+                else if (value !== null && value !== undefined && value.message !== undefined) parts.push(String(value.message))
+                else parts.push('[object]')
+              }
+              traceFailure('console-error', { message: parts.join(' ').slice(0, 160) })
+            } catch (error) { /* ignore */ }
+            return consoleErrorBase.apply(consoleBase, arguments)
+          }
+        }
+      } catch (error) { /* ignore */ }
       traceHeartbeatTimer = globalThis.setInterval(traceHeartbeat, 5000)
       traceFlushTimer = globalThis.setInterval(traceFlush, 2000)
       // announce drives every published layout change; tracing it lines state
