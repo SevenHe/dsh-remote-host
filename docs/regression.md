@@ -284,3 +284,40 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 - 切回本地会话高亮清除：点可见的本地区会话行后，块内 `selected` 行数 `1 → 0`，composer 保持可用（`contenteditable=true`，无「会话不可用」）。
 
 **注意（lab 配方坑）**：profile 的 `node_modules` 若整体软链到 `~/.dsh/profiles/desktop/node_modules`，其中 `dsh-remote-host` 指向主 checkout，改 profile `package.json` 的 `link:` 依赖不生效。必须逐项软链后单独把 `dsh-remote-host` 指向 worktree，并用 `readlink -f <profile>/node_modules/dsh-remote-host/lib/client.js` 确认，否则测的是旧代码。
+
+## boot 期 workspace/not-found（drh:claim）的根因与实测（2026-11-23）
+
+**现象**：页面刚加载、每次启动，控制台出现：
+
+```text
+initial Session restoration failed: SessionCreateError: session create failed:
+workspace/not-found: workspace "drh:claim" not found
+```
+
+**根因**：`src/shim/10-state.js` 的 `refersRemote()` 把整个 payload 转成 JSON 字符串后**搜任何已知远端 id** 来决定路由。启动时「恢复上次会话」会发 `session/create`，payload 里带着要恢复的**远端 sessionId**（当记住的工作区是合成 claim 时还带 `workspaceId: drh:claim`），于是命中 → create 被转发到 mount；而 mount 的 Host 并不拥有该 workspace，于是回 `workspace/not-found`。修前抓到的真实请求：
+
+```text
+POST /devbox/api/session/create
+{"request":{"workspaceId":"82a961b4-…<本地工作区>","sessionId":"session-bc72f3ac-…"}}
+```
+
+即一个**本地工作区**的 create，被按 payload 里的远端 sessionId 误路由到了 mount。
+
+**修法**（`src/shim/10-state.js` + `src/shim/20-transport.js`）：
+
+1. `createTarget()`：create 是**工作区作用域**操作，只按 `workspaceId` 判定——仅当它是远端 Host 真正拥有的工作区（`drh:<raw>` 且 `raw` 属于 `remoteWorkspaceIds`）才去 mount，其余一律本地。
+2. `isClaimCreate()` + `dropWorkspaceId()`：合成 claim 工作区只存在于合并后的客户端视图，**任何 Host 都无法解析** `drh:claim`；因此对这一个 id 去掉 `workspaceId` 后交给本地 Host，恢复链正常完成。
+3. `wouldRoute()` 把 claim 也算作「需要处理」，否则会直通 `localFetch` 而跳过上面的改写。
+
+**实测 before / after（同一组断言）**：
+
+| 断言 | 修前 shim (5268140) | 修后 shim |
+|---|---|---|
+| 本地工作区 + 远端 sessionId 的 create 不得到达 mount | **FAIL**（must not reach the mount: it does not own local-ws） | **PASS** |
+| drh:claim 的 create 本地化并去掉 workspaceId | **FAIL**（workspaceId 仍在） | **PASS** |
+
+命令：`DRH_SHIM=/tmp/old-shim.js node --test test/create-routing.test.mjs`（旧 shim → 2 fail）对比 `node --test test/create-routing.test.mjs`（2 pass）。
+
+**lab 实测**（19967，插件指向本分支；upstream 为本机私有 DSH 实例，真实远端会话 9 条）：把 `localStorage[dsh.sessions.current]` 指向一条**远端** sessionId 后重载，Network 抓到的 `session/create`：**mount 0 / local 0**；`workspace/not-found` 类日志 **0 条**；composer `contenteditable=true`、无「会话不可用」。
+
+**不回归**：claim 行仍 `display: none`（远端行不可见、不泄漏进原生列表）；composer 可用；`npm run check` 49/49。
