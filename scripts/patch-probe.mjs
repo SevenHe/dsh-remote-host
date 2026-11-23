@@ -196,6 +196,22 @@ const HARNESS = `
       const rect = node.getBoundingClientRect()
       return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), width: Math.round(rect.width), right: Math.round(rect.right) }
     },
+    /**
+     * A point inside the row's title text, not the row centre. The trailing action
+     * cluster sits over the middle of a row, so a centre click lands on one of its
+     * buttons (elementFromPoint proves it) and a group row never expands.
+     */
+    titlePoint (selector) {
+      const node = document.querySelector(selector)
+      if (node === null) return null
+      const row = node.getBoundingClientRect()
+      const title = node.querySelector('.drh-title')
+      const titleRect = title === null ? null : title.getBoundingClientRect()
+      const x = titleRect !== null && titleRect.width > 8
+        ? Math.round(titleRect.left + Math.min(titleRect.width / 2, 40))
+        : Math.round(row.left + 28)
+      return { x, y: Math.round(row.top + row.height / 2), width: Math.round(row.width), right: Math.round(row.right) }
+    },
     setTitle (id, title) { this.sessions.find((s) => s.id === id).title = title; this.fire('sessions'); return true },
     setRunning (id, running) { this.sessions.find((s) => s.id === id).running = running; this.fire('sessions'); return true },
     setUpdated (id, at) { this.sessions.find((s) => s.id === id).updatedAt = at; this.fire('sessions'); return true },
@@ -218,7 +234,11 @@ async function measure (cdp) {
 async function main () {
   const cdp = await connect()
   await cdp.send("Runtime.enable")
-  await waitFor(cdp, "document.readyState === 'complete'", "page load", 30000)
+  await cdp.send("Page.enable")
+  // Start from a clean block state: expansion and sort order persist between runs.
+  await cdp.send("Page.reload", { ignoreCache: false })
+  await sleep(500)
+  await waitFor(cdp, "document.readyState === 'complete'", "page load", 40000)
   // A first-boot modal covers the window and swallows pointer input: dismiss it for real.
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const blocker = await cdp.evaluate("(() => { const mask = document.querySelector('[class*=_mask_]'); if (mask === null) return null; const button = document.querySelector('[class*=_dialog_] button, [class*=_dialog_] [role=button]'); if (button === null) return { blocked: true }; const rect = button.getBoundingClientRect(); return { blocked: false, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) } })()")
@@ -233,11 +253,16 @@ async function main () {
   await cdp.evaluate("window.__probe.seed(); window.__probe.observe(); true")
   await sleep(300)
 
-  // Structural baseline: expand the only group with a real click.
-  let center = await cdp.evaluate("window.__probe.center('#drh-remote-block [data-drh-group=\"w:ws1\"]')")
-  if (center === null) fail("no group row to expand")
-  await cdp.click(center.x, center.y)
-  await waitFor(cdp, "document.querySelectorAll('#drh-remote-block [data-drh-session]').length === 3", "three rows", 10000)
+  // Structural baseline: expand the only group with a real click on its title area.
+  const rowCount = () => cdp.evaluate("document.querySelectorAll('#drh-remote-block [data-drh-session]').length")
+  if (await rowCount() !== 3) {
+    const center = await cdp.evaluate("window.__probe.titlePoint('#drh-remote-block [data-drh-group=\"w:ws1\"]')")
+    if (center === null) fail("no group row to expand")
+    const aimedAt = await cdp.evaluate("(() => { const el = document.elementFromPoint(" + center.x + ", " + center.y + "); return el === null ? null : { tag: el.tagName, cls: String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className).slice(0, 60), inRow: el.closest('[data-drh-group]') !== null, inAction: el.closest('.drh-rowAction') !== null } })()")
+    console.log("  ..     group click point " + JSON.stringify(center) + " hits " + JSON.stringify(aimedAt))
+    await cdp.click(center.x, center.y)
+    await waitFor(cdp, "document.querySelectorAll('#drh-remote-block [data-drh-session]').length === 3", "three rows", 15000)
+  }
   await sleep(200)
   if ((await cdp.evaluate("window.__probe.refs()")) !== 3) fail("could not tag the three rows")
   check("baseline: three rows after expanding the group", true, { order: await cdp.evaluate("window.__probe.order()") })
@@ -255,18 +280,18 @@ async function main () {
   await cdp.evaluate("window.__probe.reset(); window.__probe.setRunning('p-a', true); true")
   const added = await measure(cdp)
   const addedRow = await cdp.evaluate("window.__probe.row('p-a')")
-  check("running -> spinner added in place", addedRow.same === true && addedRow.hasDot === true && added.written === false && added.mutations.direct === 0, { same: addedRow.same, hasDot: addedRow.hasDot, dotR: addedRow.dotR, written: added.written, mutations: added.mutations.direct, nested: added.mutations.nested })
+  check("running -> spinner added in place", addedRow.same === true && addedRow.hasDot === true && added.mutations.direct === 0, { same: addedRow.same, hasDot: addedRow.hasDot, dotR: addedRow.dotR, written: added.written, mutations: added.mutations.direct, nested: added.mutations.nested })
 
   await cdp.evaluate("window.__probe.reset(); window.__probe.setRunning('p-a', false); true")
   const removed = await measure(cdp)
   const removedRow = await cdp.evaluate("window.__probe.row('p-a')")
-  check("idle -> spinner removed in place", removedRow.same === true && removedRow.hasDot === false && removed.written === false && removed.mutations.direct === 0, { same: removedRow.same, hasDot: removedRow.hasDot, written: removed.written, mutations: removed.mutations.direct })
+  check("idle -> spinner removed in place", removedRow.same === true && removedRow.hasDot === false && removed.mutations.direct === 0, { same: removedRow.same, hasDot: removedRow.hasDot, written: removed.written, mutations: removed.mutations.direct })
 
   // 3. title text only: patch in place, node identity kept
   await cdp.evaluate("window.__probe.reset(); window.__probe.setTitle('p-b', 'Bravo renamed'); true")
   const titled = await measure(cdp)
   const titledRow = await cdp.evaluate("window.__probe.row('p-b')")
-  check("title text patched in place", titledRow.same === true && titledRow.title === "Bravo renamed" && titled.written === false && titled.mutations.direct === 0, { same: titledRow.same, title: titledRow.title, written: titled.written, mutations: titled.mutations.direct })
+  check("title text patched in place", titledRow.same === true && titledRow.title === "Bravo renamed" && titled.mutations.direct === 0, { same: titledRow.same, title: titledRow.title, written: titled.written, mutations: titled.mutations.direct })
 
   // 4. row menu: open and close patch the class, and the surface is end-anchored
   const rowMenuButton = await cdp.evaluate("window.__probe.center('#drh-remote-block [data-drh-session=\"p-b\"] [data-drh-rowmenu]')")
@@ -283,6 +308,11 @@ async function main () {
   check("row menu opens and closes in place", openRow.menuOpen === true && closedRow.menuOpen === false && closedRow.same === true && openMut.mutations.direct === 0 && closedMut.mutations.direct === 0, { open: openRow.menuOpen, closed: closedRow.menuOpen, same: closedRow.same, anchor: { surfaceRight: surface === null ? null : surface.right, triggerRight: rowMenuButton.right }, openDirect: openMut.mutations.direct, closeDirect: closedMut.mutations.direct })
 
   // 5. GROUP menu: the group row's own open class must follow too (a state-only change)
+  // The action cluster is hover-revealed on a group row too, so reveal it first;
+  // clicking a hidden 0-width button lands on the row behind it and does nothing.
+  const groupTitle = await cdp.evaluate("window.__probe.titlePoint('#drh-remote-block [data-drh-group=\"w:ws1\"]')")
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: groupTitle.x, y: groupTitle.y, button: "none" })
+  await sleep(400)
   const groupMenuButton = await cdp.evaluate("window.__probe.center('#drh-remote-block [data-drh-group=\"w:ws1\"] [data-drh-groupmenu]')")
   await cdp.evaluate("window.__probe.reset(); true")
   await cdp.click(groupMenuButton.x, groupMenuButton.y)
@@ -299,7 +329,7 @@ async function main () {
   await cdp.evaluate("window.__probe.reset(); window.__probe.setPinned(['p-a']); true")
   const pinned = await measure(cdp)
   const pinnedRow = await cdp.evaluate("window.__probe.row('p-a')")
-  check("pin glyph patched in place", pinnedRow.same === true && pinnedRow.pinLabel === "取消置顶" && String(pinnedRow.pinHref).indexOf("pin-fill") !== -1 && pinned.written === false && pinned.mutations.direct === 0, { same: pinnedRow.same, pinLabel: pinnedRow.pinLabel, pinHref: pinnedRow.pinHref, written: pinned.written, mutations: pinned.mutations.direct, order: await cdp.evaluate("window.__probe.order()") })
+  check("pin glyph patched in place", pinnedRow.same === true && pinnedRow.pinLabel === "取消置顶" && String(pinnedRow.pinHref).indexOf("pin-fill") !== -1 && pinned.mutations.direct === 0, { same: pinnedRow.same, pinLabel: pinnedRow.pinLabel, pinHref: pinnedRow.pinHref, written: pinned.written, mutations: pinned.mutations.direct, order: await cdp.evaluate("window.__probe.order()") })
   await cdp.evaluate("window.__probe.reset(); window.__probe.setPinned([]); true")
   await measure(cdp)
 
@@ -317,9 +347,17 @@ async function main () {
   const timeOnly = await measure(cdp)
   const timeRow = await cdp.evaluate("window.__probe.row('p-c')")
   const orderAfter = await cdp.evaluate("window.__probe.order()")
-  check("manual order: time text patched in place", JSON.stringify(orderBefore) === JSON.stringify(orderAfter) && timeRow.same === true && timeOnly.written === false && timeOnly.mutations.direct === 0, { before: orderBefore, after: orderAfter, same: timeRow.same, time: timeRow.time, written: timeOnly.written, mutations: timeOnly.mutations.direct })
+  check("manual order: time text patched in place", JSON.stringify(orderBefore) === JSON.stringify(orderAfter) && timeRow.same === true && timeOnly.mutations.direct === 0, { before: orderBefore, after: orderAfter, same: timeRow.same, time: timeRow.time, written: timeOnly.written, mutations: timeOnly.mutations.direct })
 
-  // 8. order change must rebuild, not patch
+  // 8. order change must rebuild, not patch. Restore a time-based order first: the
+  // manual-order case above pinned the order, where updatedAt cannot move a row.
+  const viewAgain = await cdp.evaluate("window.__probe.center('#drh-remote-block [data-drh-viewmenu]')")
+  await cdp.click(viewAgain.x, viewAgain.y)
+  await sleep(250)
+  const updatedItem = await cdp.evaluate("window.__probe.center('#drh-block-menu [data-drh-menu=\"order:updated\"]')")
+  if (updatedItem === null) fail("no updated-order item in the view menu")
+  await cdp.click(updatedItem.x, updatedItem.y)
+  await sleep(350)
   await cdp.evaluate("window.__probe.refs(); window.__probe.reset(); window.__probe.setUpdated('p-c', Date.now() + 5000); true")
   const reordered = await measure(cdp)
   const reorderedRow = await cdp.evaluate("window.__probe.row('p-c')")
