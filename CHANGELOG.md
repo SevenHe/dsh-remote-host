@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+
+- **修复远端短抖动导致的渲染进程崩溃**：mux 连接不再由插件自建，只重写 URL 交给官方连接层，连接与重连由其负责（config.streamRelay 默认开启，显式 false 可回退）。详见 docs/known-issue-short-flap-crash.md。
 ## 1.14.7 — 2026-11-23
 
 ### 修复

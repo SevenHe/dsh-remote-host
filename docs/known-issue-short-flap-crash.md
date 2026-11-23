@@ -1,51 +1,63 @@
-# 已知问题：短抖动下渲染进程崩溃（路径 B）
+# 已知问题：远端短抖动导致渲染进程崩溃（已修复）
 
-**状态**：未修复（已定位到触发动作，但修法需要重写远端 mux 连接方式，留待下个版本）。
+## 状态
 
-## 现象
+**已修复**：config.streamRelay **默认开启** —— 挂载的 mux 连接不再由插件自建，只把 URL 改写到挂载路径、交给官方连接层，连接与重连全部由官方层负责。显式 streamRelay: false 仍可回退旧的 mux router（逃生门）。
 
-到远端的连接**短暂中断后迅速恢复**（约 0.2–1 秒，典型于 VPN 抖动）时，渲染进程可能以
-`SIGTRAP / brk #0` 死亡：同一指令、不打印任何 V8 fatal 文本、不产出 `.ips`（或延迟落盘）。
-长时间断开（> 3.5 秒）**不会**触发这个问题——那条路径已经修复（见下）。
+## 触发条件（历史记录）
 
-## 触发条件（实测）
+远端连接**短抖动**（几百毫秒断开后立即恢复）时，渲染进程以 SIGTRAP / brk #0 死亡；不打印任何 V8 fatal；.ips 落在同一条指令；死亡前最后一条事件是 listener-attach（readyState 0），15-17 秒后才重启（crashpad 写报告延迟）。
 
-| 条件 | 结果 |
-|---|---|
-| 远端可达，不中断 | 不崩 |
-| 远端**从未**可达（一直连不上） | 不崩 |
-| 连接中断 > 3.5 秒（长断开） | **不崩**（降级交还官方连接层） |
-| 连接中断 ~0.2–1 秒后恢复（短抖动） | **崩** |
-| 短抖动 + 插件**不创建**重连 socket | **不崩** |
+## 根因分析（历史记录）
 
-## 已确证的根因边界
+已实测排除：同步重入/深递归（depth 恒 1）、replay 扇出（remote-open 从未出现）、监听器挂错 socket（三处 socketId 一致）、已 open 的 race、物理内存 OOM（MALLOC 17-25MB）、JS 栈溢出（崩溃时 depth=3，基线 11）。
 
-崩溃由**我们创建重连用的 WebSocket** 这个动作触发，与下列因素**均无关**（全部经实测排除）：
+判别实验结论：**不创建重连 socket -> 0 崩溃；创建 -> 5/5 崩**（即使把创建动作移到新栈上仍然崩）。触发点是「插件自己新建远端 mux socket」这个动作本身。
 
-- 同步重入 / 深递归（重连逻辑深度恒为 1）
-- 大 replay 扇出（崩溃前 `remote-open` / `replay-*` 从未出现）
-- 监听器挂错 socket、或挂载时 socket 已 open 的竞态（三处 `socketId` 一致，`readyState=0`）
-- 内存不足（MALLOC 17–25 MB）
-- JS 栈溢出（崩溃时 `stackDepth=3`，正常路径基线 11）
-- 创建动作所在的栈层级（移到 `setTimeout` 新栈上仍然 5/5 崩）
+## 修复原理
 
-对照：`streams: false` 时官方连接层自行处理断线，**同一抖动序列 0 崩溃**——说明问题在我们自建的 mux 连接这条链上。
+1. routeCreateWebSocket 命中 mux URL 时不再构建 router，而是用 mountSocketUrl 改写路径后返回原生 socket（openSocket），插件不持有连接、不重连；
+2. 宿主侧既有 proxyUpgrade 中继把 /devbox/api/remote.mux 转发到远端，Host 与 cookie 由它补；
+3. 官方连接层自己处理断线与重连，实测同一抖动序列 0 崩溃；
+4. 默认开启，可显式关闭回退。
 
-## 已修复的相关缺陷（已在本仓库）
+## 验证记录
 
-1. **长断开路径**：远端腿连续不可用超过 3.5 秒 → `degrade()` 把 mux 交还官方连接层（`DEGRADE_AFTER_MS`），实测长断开 3 轮 **0 崩溃**；
-2. **复用已关闭的 socket**：`connect()` 只复用 `CONNECTING/OPEN` 的 socket，`CLOSING/CLOSED` 一律丢弃重建；
-3. **卡在 CONNECTING 的 socket**：2.5 秒看门狗放弃并重试，避免无限期挂在半开连接上；
-4. **代理层**：请求/WS 中继 8 秒上限，超时即 502 快速失败，不再挂死界面。
+- 干净单实例（trace-on 仅 1 次）：stream-relay 出现，指向 ws://.../devbox/api/remote.mux；
+- 5 轮 0.6s 极短抖动：RENDER_GONE = 0，boots 恒 1；
+- 数据完好：totalMembers = 87、远端会话 112 条、分组 71；
+- token 级流式仍在：主区文本长度按 300ms 采样逐步增长（2762 -> 2768 -> 2873 -> 2925），非一次性跳满。
 
-## 下个版本的路线
+## 收口验证（默认开启、无显式配置键，单实例）
 
-方向：**插件不再自建远端 mux 连接**。可选实现：
+### 项 1：正确口径的 rows
 
-1. 只做 **URL 重写**（把页面的 mux socket 指向挂载路径，由宿主侧中继透明转发），连接与重连全部交给官方连接层；
-2. 或改为宿主侧中继 + 轻量 fetch 探测恢复，恢复后由官方层重连。
+README 里没有 streamRelay 键，profile 也没写 —— 验证的是**新默认值**本身：
 
-## 用户侧可用的规避手段
+| 指标 | 值 |
+| --- | --- |
+| trace-on | 1（单实例） |
+| stream-relay | 出现（默认开启生效） |
+| totalMembers | 87 |
+| expanded（点击 6 个未展开组后） | 1 |
+| **展开后 rows** | **1** |
 
-把 profile 里的 `streams` 设为 `false`：实测同一抖动序列 **0 崩溃**，代价是失去流式逐字输出（正文整段出现），
-其余功能（会话列表、打开会话、发消息、模型位、ssh 模式）不受影响。
+说明：分组是**手风琴式**（同时只允许一个展开），所以连点 6 个组后 expanded 仍为 1，rows=1 是真实 UI 行为而非测量副作用；rows>0 达标。
+
+### 项 2：长断开 5s x 3（同一实例）
+
+| 指标 | 值 | 要求 |
+| --- | --- | --- |
+| RENDER_GONE | **0** | 0 |
+| boots | **1** | 1 |
+| composer | 1 | 可用 |
+| rows | 1 | 有行 |
+| totalMembers | 87 | 数据未丢 |
+| degrade-handoff | **0** | 新路径不需要降级 |
+| reconnect-enter / listener-attach / remote-unavailable | **0 / 0 / 0** | 我们的 router 完全没跑 |
+| stream-relay | 14 | 新路径在工作 |
+
+三轮长断开后页面持续采样：composer=1、rows=1、nodes=3675、block=1、boots=1。
+
+**结论**：两项达标，默认开启可以合并。我们的 mux router 在整轮里一次都没被调用（reconnect-enter / listener-attach 均为 0），
+连接与重连完全由官方连接层承担 —— 这就是路径 B 的根治。

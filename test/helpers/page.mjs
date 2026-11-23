@@ -69,7 +69,11 @@ class FakeSocket {
  * @param options.failRemote - answer the mounted session/list with a failure.
  */
 export function createPage(options = {}) {
-  const config = { mount: '/devbox', label: 'devbox', streams: true, ...options.config }
+  // The shim default is now the relay path; the suites below exercise the mux router, so a test
+  // that does not ask for the relay keeps the router unless it says otherwise.
+  // The shim default is now the relay path. The suites below exercise the mux router, so the
+  // helper opts back in to the router unless a test asks for the relay explicitly.
+  const config = { mount: '/devbox', label: 'devbox', streams: true, streamRelay: false, ...options.config }
   const localItems = options.localItems ?? []
   const remoteItems = options.remoteItems ?? []
   // bodies are recorded alongside the paths so a test can assert on a rewritten request
