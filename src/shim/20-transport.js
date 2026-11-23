@@ -23,6 +23,31 @@
   }
 
   /**
+   * Rebuild a session/create init without its workspaceId.
+   *
+   * Only used for the synthetic claim Workspace: the create it carries can only be
+   * answered by a Host, and no Host owns that id, so the id is dropped and the local Host
+   * supplies a plain Session. Anything unexpected leaves the request untouched.
+   */
+  function dropWorkspaceId(init) {
+    try {
+      if (init === undefined || init === null || typeof init.body !== 'string') return undefined
+      var parsed = JSON.parse(init.body)
+      var request = createRequest(parsed.payload)
+      if (request === undefined || request.workspaceId !== CLAIM_WORKSPACE_ID) return undefined
+      var copy = {}
+      for (var key in request) { if (Object.prototype.hasOwnProperty.call(request, key) && key !== 'workspaceId') copy[key] = request[key] }
+      parsed.payload.args.request = copy
+      var forwarded = {}
+      for (var field in init) { if (Object.prototype.hasOwnProperty.call(init, field)) forwarded[field] = init[field] }
+      forwarded.body = JSON.stringify(parsed)
+      return forwarded
+    } catch (error) {
+      return undefined
+    }
+  }
+
+  /**
    * Whether this call is rerouted away from the local Host. Only a reroute may
    * fall back to a second, local attempt: a pass-through request that fails has
    * already reached the Host once, and retrying it would duplicate POSTs.
@@ -33,6 +58,13 @@
       if (request === undefined) return false
       if (request.method === 'session/list') return true
       if (request.method === EVENT_RESULT_ENDPOINT) return true
+      // A create is workspace-scoped: never let a mention of a remote Session id in the
+      // payload send it to the mount (that is what made boot restore fail every start).
+      // The claim Workspace still needs the rewrite below, so it is handled here too
+      // rather than being passed straight to the local Host.
+      if (request.method === 'session/create') {
+        return createTarget(request.payload) === 'remote' || isClaimCreate(request.payload) === true
+      }
       return refersRemote(request.payload) === true
     } catch (error) { return false }
   }
@@ -56,6 +88,19 @@
       var rewritten = rewriteEventResult(init)
       if (rewritten !== undefined) return localFetch(mountUrl(input), rewritten)
       return localFetch(input, init)
+    }
+    if (method === 'session/create') {
+      if (createTarget(request.payload) === 'remote') {
+        note('route-remote', { method: method })
+        return localFetch(mountUrl(input), init)
+      }
+      // The claim Workspace exists only in the merged client view, so neither Host can
+      // resolve it. Restore asks for a Session there on the first load after such a
+      // selection; drop the workspace and let the local Host answer, instead of failing
+      // the whole restoration with workspace/not-found.
+      var claimless = isClaimCreate(request.payload) === true ? dropWorkspaceId(init) : undefined
+      if (claimless !== undefined) note('claim-create-local', { method: method })
+      return localFetch(input, claimless === undefined ? init : claimless)
     }
     if (request !== undefined && refersRemote(request.payload)) {
       note('route-remote', { method: method })

@@ -72,7 +72,9 @@ export function createPage(options = {}) {
   const config = { mount: '/devbox', label: 'devbox', streams: true, ...options.config }
   const localItems = options.localItems ?? []
   const remoteItems = options.remoteItems ?? []
-  const calls = { local: [], mount: [], sockets: [] }
+  // bodies are recorded alongside the paths so a test can assert on a rewritten request
+  // (the claim-workspace create drops its workspaceId before the local Host sees it).
+  const calls = { local: [], mount: [], sockets: [], bodies: { local: [], mount: [] } }
   const sockets = new Map()
   const clientFrames = []
 
@@ -88,6 +90,8 @@ export function createPage(options = {}) {
     // relative) and '/devbox/api/x' (the mount), and assertions want one form.
     const path = '/' + url.replace(/^https?:\/\/[^/]+/, '').replace(/^\/+/, '')
     const isMount = path === config.mount || path.startsWith(config.mount + '/')
+    const leg = isMount ? 'mount' : 'local'
+    if (typeof init?.body === 'string') calls.bodies[leg].push({ path, body: init.body })
     if (isMount) {
       calls.mount.push(path)
       if (path.endsWith('/api/session/list')) {
