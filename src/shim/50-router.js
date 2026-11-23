@@ -553,9 +553,10 @@
     }
 
     function reconnectRemote() {
-      if (shuttingDown === true) return
-      if (degraded === true) return
-      if (reconnectPending === true) return
+      traceEvent('reconnect-enter', { degraded: degraded === true, pending: reconnectPending === true })
+      if (shuttingDown === true) { traceEvent('attempt-early-return', { reason: 'shutting-down' }); return }
+      if (degraded === true) { traceEvent('attempt-early-return', { reason: 'degraded' }); return }
+      if (reconnectPending === true) { traceEvent('attempt-early-return', { reason: 'pending' }); return }
       // Depth counter: a synchronous re-entry chain is invisible in the trace otherwise,
       // and it is exactly what a crashing flap looks like.
       reconnectDepth += 1
@@ -568,6 +569,7 @@
       upstreams.delete('remote')
       var attempt = function () {
         reconnectTimer = undefined
+        traceEvent('attempt-run', { attempt: reconnectAttempts, degraded: degraded === true })
         if (shuttingDown === true) { reconnectPending = false; return }
         var socket
         try { socket = connect('remote') } catch (error) { socket = undefined }
