@@ -17,6 +17,8 @@
 
 1. **系统崩溃报告**：`~/Library/Logs/DiagnosticReports/*Renderer*.ips`（JSON，两段：首行 header + 正文）。取 `procLaunch`（进程启动时间）与 `captureTime`（崩溃时间）算存活时长；用**存活时长与重启时刻去对齐日志**，判断「这次崩溃带的是哪一版代码」。
 2. **应用自己的崩溃日志**：打包应用通常会在 `~/Library/Logs/<AppName>/crash-*-renderer.log` 落一份。**注意**：它往往写着 `no error-level renderer console output was captured` —— 也就是**不含 fatal 文本**，不要以为漏看。
+
+> 1.14.7 起本插件自身补了这条缺失证据：页面里的 `error`/`unhandledrejection`/`console.error` 会进面包屑并立即上报（上限 20 条/次加载），见 `src/shim/05-trace.js` 与 `CHANGELOG.md` 1.14.7「渲染进程 JS 错误取证」。判断“没有渲染进程错误”前，先看插件面包屑。
 3. **统一日志**：`log show --last 30m --predicate 'process CONTAINS "<App>"'`。通常只有噪音；能捞到就赚。
 4. **我们自己的 trace**（若插件埋了点）：心跳（heap/nodes/renders/DOM 计数）+ 交互面包屑。用来回答「崩溃前在做什么、资源是否在涨」。**注意上传失败时日志会断档，断档≠卡死**。
 5. **stderr 捕获（唯一能拿到 fatal 文本的路）**：

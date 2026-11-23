@@ -393,7 +393,7 @@ POST /devbox/api/session/create
 | 特例 | `session/list`、`$events`、`$events/result` | 走合并 / 事件结果改写，不走该判据 |
 | 宿主全局（风险） | `settings/*`、`pluginManager/*`、`pluginInventory/*`、`agentPresets/list`、`permissionPresets/catalog`、`skills/list`、`schedule/*`、`speech/*`、`messageFeedback/*`、`workspaceFiles/*` | 无会话/工作区主体，只有「路径或标题里恰好出现某个 id」才会误路由；保持现状，`workspaceFiles` 的路径含 id 是最现实的一条 |
 
-`npm run check`：51/51。
+`npm run check`：58/58（2026-11-23 复核，见 `docs/verification-1.14.7.md`）。
 
 ## 远端会话模型位显示「请选择模型」的根因与实测（2026-11-23）
 
