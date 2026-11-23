@@ -142,6 +142,12 @@
     var reconnectPending = false
     /** Synchronous re-entry depth of reconnectRemote (should stay 1). */
     var reconnectDepth = 0
+    /** Experiment A: one-shot deferral of the socket creation. */
+
+    /** Real JS call-stack depth; native stack exhaustion is a brk with no message, so measure. */
+    function stackDepthNow() {
+      try { return new Error().stack.split(String.fromCharCode(10)).length } catch (error) { return -1 }
+    }
     /** Monotonic id per leg socket, so listener-vs-socket identity is visible in the trace. */
     var socketSeq = 0
     var merges = new Map()
@@ -193,7 +199,7 @@
         return undefined
       }
       socket.__drhSocketId = (socketSeq += 1)
-      traceEvent('connect-return', { kind: kind, socketId: socket.__drhSocketId, readyState: socket.readyState, reused: false })
+      traceEvent('connect-return', { kind: kind, socketId: socket.__drhSocketId, readyState: socket.readyState, reused: false, stackDepth: stackDepthNow() })
       note('leg-open-requested', { kind: kind, url: target })
       publishStatus(kind, 'connecting')
       // A shell-provided socket may implement only addEventListener; assigning
@@ -561,7 +567,7 @@
     }
 
     function reconnectRemote() {
-      traceEvent('reconnect-enter', { degraded: degraded === true, pending: reconnectPending === true })
+      traceEvent('reconnect-enter', { degraded: degraded === true, pending: reconnectPending === true, stackDepth: stackDepthNow() })
       if (shuttingDown === true) { traceEvent('attempt-early-return', { reason: 'shutting-down' }); return }
       if (degraded === true) { traceEvent('attempt-early-return', { reason: 'degraded' }); return }
       if (reconnectPending === true) { traceEvent('attempt-early-return', { reason: 'pending' }); return }
@@ -577,7 +583,7 @@
       upstreams.delete('remote')
       var attempt = function () {
         reconnectTimer = undefined
-        traceEvent('attempt-run', { attempt: reconnectAttempts, degraded: degraded === true })
+        traceEvent('attempt-run', { attempt: reconnectAttempts, degraded: degraded === true, stackDepth: stackDepthNow() })
         if (shuttingDown === true) { reconnectPending = false; return }
         var socket
         try { socket = connect('remote') } catch (error) { socket = undefined }
@@ -618,7 +624,7 @@
             if (degraded !== true) reconnectRemote()
           }, ATTEMPT_TIMEOUT_MS)
         }
-        traceEvent('attempt-socket', { socketId: socket.__drhSocketId, readyState: socket.readyState, attempt: reconnectAttempts })
+        traceEvent('attempt-socket', { socketId: socket.__drhSocketId, readyState: socket.readyState, attempt: reconnectAttempts, stackDepth: stackDepthNow() })
         var onOpen = function () {
           reconnectAttempts = 0
           if (attemptTimer !== undefined) {
@@ -643,7 +649,7 @@
           traceEvent('listener-attach', { socketId: socket.__drhSocketId, readyState: 1, mode: 'immediate' })
           onOpen()
         } else if (typeof socket.addEventListener === 'function') {
-          traceEvent('listener-attach', { socketId: socket.__drhSocketId, readyState: socket.readyState, mode: 'listener' })
+          traceEvent('listener-attach', { socketId: socket.__drhSocketId, readyState: socket.readyState, mode: 'listener', stackDepth: stackDepthNow() })
           socket.addEventListener('open', onOpen)
         }
       }
