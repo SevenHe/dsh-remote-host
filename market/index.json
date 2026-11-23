@@ -62,7 +62,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/SevenHe/dsh-remote-host",
-            "commit": "PENDING"
+            "commit": "ec1d919e4336a3648ef12e66967659fb2e2bb5a6"
           },
           "engines": {
             "dsh": "^0.2.2-rc.3"
