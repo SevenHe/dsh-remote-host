@@ -31,7 +31,7 @@ const SKIP = new Set(["package-lock.json", "pnpm-lock.yaml", "yarn.lock"])
 
 // Fragments keep this file from tripping its own rules.
 const PRODUCT_PREFIX = "byt" + "ed"
-const INTERNAL_DOMAIN_PARTS = ["by" + "ted.org", "by" + "tedance.net", "co" + "rp.", "cod" + "e.byted."]
+const INTERNAL_DOMAIN_PARTS = ["by" + "ted.org", "by" + "tedance.net", "co" + "rp.", "cod" + "e.by" + "ted."]
 const PARTITION_PARTS = ["/da" + "ta0", "/op" + "t/tiger", "/m" + "nt/"]
 const TOKEN_PREFIXES = ["gh" + "p_", "github_" + "pat_", "AK" + "IA"]
 const PRIVATE_KEY_HEAD = "----" + "-BEGIN"
@@ -60,7 +60,8 @@ const rules = [
         const at = lower.indexOf(part)
         if (at !== -1) return line.slice(at, at + 24)
       }
-      if (/\.internal\b/i.test(line)) return ".internal"
+      const internalSuffix = new RegExp("\\." + "inter" + "nal\\b", "i")
+      if (internalSuffix.test(line)) return "internal-suffix"
       return null
     },
   },

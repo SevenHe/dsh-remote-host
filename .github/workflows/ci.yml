@@ -29,6 +29,9 @@ jobs:
         run: node scripts/verify-manifest.mjs
       - name: Plugin index is well formed
         run: node scripts/verify-index.mjs
+      # The repository is public: no internal hosts, product names, paths or credentials.
+      - name: No sensitive internal data
+        run: node scripts/verify-sensitive.mjs
       # The shim's data-plane decisions (group modes, session/list merge, event
       # filtering, routing, published snapshot) drive the whole plugin.
       - name: Data-plane tests
