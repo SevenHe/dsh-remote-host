@@ -284,3 +284,48 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 - 切回本地会话高亮清除：点可见的本地区会话行后，块内 `selected` 行数 `1 → 0`，composer 保持可用（`contenteditable=true`，无「会话不可用」）。
 
 **注意（lab 配方坑）**：profile 的 `node_modules` 若整体软链到 `~/.dsh/profiles/desktop/node_modules`，其中 `dsh-remote-host` 指向主 checkout，改 profile `package.json` 的 `link:` 依赖不生效。必须逐项软链后单独把 `dsh-remote-host` 指向 worktree，并用 `readlink -f <profile>/node_modules/dsh-remote-host/lib/client.js` 确认，否则测的是旧代码。
+
+<a id="patch-probe"></a>
+
+## B-30 / B-31 怎么跑：行级补丁探针 `scripts/patch-probe.mjs`
+
+B-30（状态变化只补丁、不重建）与 B-31（排序变化才重建）由 `scripts/patch-probe.mjs` 自动判定，无需真远端：探针锁定 `__DSH_REMOTE_HOST_STATE__` / `__DSH_REMOTE_HOST_SESSIONS__` / `__DSH_REMOTE_HOST_MARKS__` 三个全局，再 dispatch `drh:state`/`drh:sessions`/`drh:marks`，走的仍是生产链路（globals → 事件 → 重绘）。
+
+```bash
+# 1) lab：profile 的 node_modules 必须是**实体副本**，再单独把插件软链到被测分支
+ln -sfn /path/to/dsh-remote-host-branch <profile>/node_modules/dsh-remote-host
+readlink -f <profile>/node_modules/dsh-remote-host/lib/client.js   # 必须指向被测分支
+# 2) 渲染器：任意带 CDP 的 Chromium（headless Chrome 亦可），加载 lab 页面
+# 3) 跑探针（--url 用于在多标签里挑对页面）
+node scripts/patch-probe.mjs --cdp 9223 --url 19961
+```
+
+探针开头会 `Page.reload`：展开态与排序偏好会跨运行残留，不重载会读到上一轮的状态。
+
+两条证据通道：**节点身份**（改动前给行打的 expando 能否复用）与**按层级拆分的 childList 变更**（`direct` = `target === container`，即整段重写；`nested` = 就地补丁）。
+
+### 实测（2026-11-23，lab 19961，headless Chrome 157，`lib/client.js` 指向被测分支）
+
+8 条断言全部通过，`PATCH-PROBE RESULT {"total":10,"passed":10,"failed":[]}`：
+
+```
+ok baseline: three rows after expanding the group  {"order":["p-a","p-b","p-c"]}
+ok hover reveals the 3 row actions  {"before":{"display":"none","opacity":"1","width":0},"after":{"display":"flex","opacity":"1","width":74},"actionCount":3}
+ok running -> spinner added in place  {"same":true,"hasDot":true,"dotR":"9.5","written":true,"mutations":0,"nested":1}
+ok idle -> spinner removed in place  {"same":true,"hasDot":false,"written":false,"mutations":0}
+ok title text patched in place  {"same":true,"title":"Bravo renamed","written":true,"mutations":0}
+ok row menu opens and closes in place  {"open":true,"closed":false,"same":true,"anchor":{"surfaceRight":207,"triggerRight":207},"openDirect":0,"closeDirect":0}
+ok group menu open class patched in place  {"open":true,"closed":false,"openDirect":0,"closeDirect":0}
+ok pin glyph patched in place  {"same":true,"pinLabel":"取消置顶","pinHref":"#dsw-icon-pin-fill-regular","written":true,"mutations":0,"order":["p-a","p-b","p-c"]}
+ok manual order: time text patched in place  {"before":["p-a","p-b","p-c"],"after":["p-a","p-b","p-c"],"same":true,"time":"2分钟","written":true,"mutations":0}
+ok order change rebuilds the list  {"order":["p-c","p-a","p-b"],"same":false,"written":true,"mutations":2}
+```
+
+读法：`same` 是行节点是否被复用；`mutations` 是容器级 childList 变更数（`0` = 没有重建、只补丁）；`nested` 是行内就地变更。B-30 要求 `same:true` 且 `mutations:0`；B-31 要求 `same:false` 且 `mutations>0`。
+
+> **`written` 不是「容器被重写」的信号。** `lib/client.js:1297` 把它算成「重新生成的 html 串与已存串不同」，而已存串只在重建分支里更新，所以补丁路径下它会一直是 `true`（甚至出现「先 true 后 false」的陈旧基线）。判断是否重建只看 `mutations` 与 `same`；探针因此不再断言 `written`，只把它留在 JSON 里供参考。若希望 `written` 能当重建指标，需要产品侧在重建分支里单独置位——那是 `lib/client.js` 的改动，不在探针范围内。
+
+### 探针曾经的两个坑（已修）
+
+- **分组行点不开**：按行中心点击会落在尾部动作按钮的 SVG 上（`elementFromPoint` 可证），行的点击处理器不执行。改为点标题区域（`.drh-title`），并把命中的元素打进日志——布局再变时会显示「点到了哪个元素」，而不是干等超时。
+- **B-31 用例被前置状态污染**：B-31 前面刚把排序切成「手动排序」，此时 `updatedAt` 不会移动任何行，于是「不重建」是正确的；但那样就测不到 B-31。现在先切回「最近更新」再改时间。
