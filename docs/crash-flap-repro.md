@@ -12,11 +12,11 @@ macOS 上 **signal 5 = SIGTRAP = EXC_BREAKPOINT**，与 38 份 `.ips` 里的 `br
 
 | 组件 | 配置 |
 | --- | --- |
-| TCP 代理 | `node net.createServer`，`127.0.0.1:19999` → `10.37.114.43:3082`；`pass` / `blackhole` 双模式 |
+| TCP 代理 | `node net.createServer`，`127.0.0.1:19999` → `devbox.example.com:3080`；`pass` / `blackhole` 双模式 |
 | blackhole 行为 | **立即 destroy 全部存活连接**（150 ms 轮询）**并且拒绝新连接**（实测 `refused=6`），等价于 VPN 抖动 |
 | lab | `DSH_HOME=/tmp/dsh-rh-c4-flap`，端口 19993，profile `c4flap`；`upstream: http://127.0.0.1:19999`、`authority` 保持真实远端、`cookieFile` 用真实 cookie |
-| 插件 | 软链到 `/Users/bytedance/Workspace/dsh-rh-crash4`（含本轮新加的 `inst` 实例标识） |
-| 渲染进程 | `/tmp/dsh-elec-run/.../Electron`（**44.7.0 / v8 15.2.124.28-electron.0 / chrome 152**，与崩溃报告一致）；harness 用**私有副本** `/tmp/dsh-elec-app-c4`（共享目录未动） |
+| 插件 | 软链到 `/Users/me`（含本轮新加的 `inst` 实例标识） |
+| 渲染进程 | `/tmp/dsh-elec-run/.../Electron`（**44.7.0 / v8 15.2.124.x-electron.0 / chrome 152**，与崩溃报告一致）；harness 用**私有副本** `/tmp/dsh-elec-app-c4`（共享目录未动） |
 
 lab 启动确认（原文）：
 ```
