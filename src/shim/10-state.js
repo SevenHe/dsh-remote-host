@@ -49,6 +49,38 @@
     return hit
   }
 
+  /** Whether this method is answered by per-host configuration, not Session state. */
+  function modelScopedMethod(method) {
+    return typeof method === 'string' && MODEL_METHODS.indexOf(method) !== -1
+  }
+
+  /** Whether a remote Session was the page's focus recently enough to own config reads. */
+  function remoteFocused() {
+    return remoteFocusAt > 0 && Date.now() - remoteFocusAt < REMOTE_FOCUS_TTL_MS
+  }
+
+  /** Record that the page is looking at a remote Session. */
+  function noteRemoteFocus(method) {
+    var already = remoteFocused()
+    remoteFocusAt = Date.now()
+    if (already !== true) note('focus-remote', { method: method })
+  }
+
+  /** Drop the focus once the page moves to a Session this host owns. */
+  function clearRemoteFocus(reason) {
+    if (remoteFocusAt === 0) return
+    remoteFocusAt = 0
+    note('focus-clear', { reason: reason })
+  }
+
+  /** Whether a payload addresses a Session at all (its id cannot be classified without one). */
+  function mentionsSessionId(value) {
+    try {
+      var text = JSON.stringify(value)
+      return typeof text === 'string' && text.indexOf('"sessionId"') !== -1
+    } catch (error) { return false }
+  }
+
   function envelope(rpcId, value) {
     return new Response(JSON.stringify({ type: 'server-response', rpcId: rpcId, result: { ok: true, value: value } }), {
       status: 200,

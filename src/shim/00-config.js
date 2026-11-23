@@ -50,6 +50,17 @@
   /** Captured before any patching, so the router can still open real sockets. */
   var NativeWebSocket = globalThis.WebSocket
   var remoteSessions = new Set()
+  /**
+   * When a remote Session was last the page's focus. Mount-scoped config reads (the
+   * model catalogue) carry no session id, so refersRemote() cannot route them; they
+   * must follow whichever host owns the Session being viewed, or the picker lists
+   * this host's models and the remote rejects the prompt.
+   */
+  var remoteFocusAt = 0
+  /** Methods answered by per-host configuration rather than by Session state. */
+  var MODEL_METHODS = ['llm/listProviders', 'llm/listConfigurableProviders', 'llm/discoverModels']
+  /** Focus expires so a remote Session left open cannot hijack a later local one. */
+  var REMOTE_FOCUS_TTL_MS = 15 * 60 * 1000
   var remoteWorkspaceIds = new Set()
   /** Display window for remote work: recent activity, or anything still running. */
   var WINDOW_DAYS = typeof config.windowDays === 'number' && config.windowDays > 0 ? config.windowDays : 30

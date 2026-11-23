@@ -73,3 +73,30 @@ test('routing: a remote-id stream open is sent to the mounted leg only', async (
   assert.equal(remoteOpen.endpoint, 'session/follow')
   assert.equal(remoteOpen.payload.args.sessionId, REMOTE_SESSION)
 })
+
+test('routing: the model catalogue follows the focused remote session', async () => {
+  const page = createPage({ config: { group: 'none' }, localItems: LOCAL_ITEMS, remoteItems: REMOTE_ITEMS })
+  await page.settle()
+  // Opening the remote Session is what sets the focus.
+  await mountCallsDuring(page, () => call(page, 'session/follow', { sessionId: REMOTE_SESSION }))
+  const mount = await mountCallsDuring(page, () => call(page, 'llm/listConfigurableProviders', {}))
+  assert.deepEqual(mount, ['/devbox/api/llm/listConfigurableProviders'],
+    'the picker must list the host that will run the turn')
+})
+
+test('routing: the model catalogue stays local before any remote session is opened', async () => {
+  const page = createPage({ config: { group: 'none' }, localItems: LOCAL_ITEMS, remoteItems: REMOTE_ITEMS })
+  await page.settle()
+  const mount = await mountCallsDuring(page, () => call(page, 'llm/listConfigurableProviders', {}))
+  assert.deepEqual(mount, [], 'a local Session keeps this host catalogue')
+})
+
+test('routing: opening a local session returns the catalogue to this host', async () => {
+  const page = createPage({ config: { group: 'none' }, localItems: LOCAL_ITEMS, remoteItems: REMOTE_ITEMS })
+  await page.settle()
+  await mountCallsDuring(page, () => call(page, 'session/follow', { sessionId: REMOTE_SESSION }))
+  await call(page, 'session/follow', { sessionId: 'local-1' })
+  const mount = await mountCallsDuring(page, () => call(page, 'llm/listProviders', {}))
+  assert.deepEqual(mount, [], 'focus follows the Session the user opened')
+})
+

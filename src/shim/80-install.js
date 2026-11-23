@@ -88,6 +88,9 @@
         }
         return localFetch(input, init)
       }
+      // Local pass-throughs must be observed as well: opening a Session this host
+      // owns is what hands the mount-scoped configuration reads back to it.
+      trackSessionFocus(requestOf(init))
       if (wouldRoute(input, init) !== true) return localFetch(input, init)
       return routeFetch(input, init).catch(function () { return localFetch(input, init) })
     }
@@ -144,6 +147,17 @@
               var merged = mergeListValues(localResult.value, remoteResult.value)
               note('list-merge', { local: merged.localCount, remote: merged.remoteCount, visibleRemote: merged.visibleRemote })
               return { ok: true, value: merged.value }
+            })
+          }
+          // The desktop shell decodes this carrier instead of fetch, so mount-scoped
+          // configuration reads have to be routed here too, or the picker keeps
+          // listing this host's models for a Session the mount will run.
+          trackSessionFocus({ method: endpoint, payload: payload })
+          if (modelScopedMethod(endpoint) && remoteFocused()) {
+            note('route-remote', { endpoint: endpoint })
+            return remoteUnary(endpoint, payload, boundedSignal(signal)).catch(function () {
+              note('route-local-fallback', { method: endpoint, reason: 'mount failed' })
+              return baseRpc.call(channel, endpoint, payload, signal)
             })
           }
           if (refersRemote(payload)) {
