@@ -146,11 +146,13 @@ test('degrade: a successful remote open resets the clock', async () => {
   client.send(JSON.stringify({ type: 'open', streamId: 'e1', endpoint: '$events', payload: { args: {} } }))
   const remote = page.sockets.get('remote')
   remote.emit('close', { code: 1006 })
-  advance(5000)
+  advance(1000)
   remote.emit('open', {})
-  advance(10000)
-  remote.emit('close', { code: 1006 })
-  assert.equal(client.readyState === 3, false, 'the open cleared the outage clock')
+  // The recovery work is deferred out of the socket's open dispatch on purpose; drain it.
+  page.fireTimers()
+  page.fireTimers()
+  advance(20000)
+  assert.equal(client.readyState === 3, false, 'the successful open cleared the outage clock')
 })
 
 test('degrade: a healthy connection never degrades', async () => {

@@ -188,8 +188,16 @@
         : function (type, handler) { socket['on' + type] = handler }
       on('open', function () {
         note('leg-opened', { kind: kind })
-        publishStatus(kind, 'open')
-        if (kind === 'remote') noteRemoteAvailable()
+        if (kind !== 'remote') { publishStatus(kind, 'open'); return }
+        traceEvent('status-open-enter', {})
+        // Publishing the status reaches the shipped client synchronously; defer it so the open
+        // dispatch finishes before anything re-subscribes.
+        var publish = function () {
+          publishStatus(kind, 'open')
+          traceEvent('status-open-exit', {})
+        }
+        if (typeof setTimeout === 'function') setTimeout(publish, 0)
+        else publish()
       })
       // A leg that never opens must be distinguishable from one that opens and
       // then goes quiet, so sample its state instead of waiting forever.
@@ -446,7 +454,7 @@
     function replayRemoteStreams() {
       if (remoteStreams.size === 0) return
       var sent = 0
-      traceEvent('replay-begin', { total: remoteStreams.size, depth: reconnectDepth })
+      traceEvent('replay-enter', { total: remoteStreams.size, depth: reconnectDepth })
       remoteStreams.forEach(function (entry, oldId) {
         byUpstream.delete(oldId)
         counter += 1
@@ -463,6 +471,7 @@
         try {
           sendLeg('remote', JSON.stringify({ type: 'open', streamId: nextId, endpoint: entry.endpoint, payload: entry.payload }))
           sent += 1
+          if (sent <= 8) traceEvent('replay-send', { i: sent, endpoint: entry.endpoint })
         } catch (error) { /* the next attempt retries */ }
       })
       note('replay-remote', { streams: remoteStreams.size })
@@ -580,10 +589,19 @@
             try { clearTimeout(attemptTimer) } catch (error) { /* already gone */ }
             attemptTimer = undefined
           }
-          noteRemoteAvailable()
           traceEvent('remote-open', { streams: remoteStreams.size })
-          replayRemoteStreams()
-          traceEvent('replay-done', { streams: remoteStreams.size })
+          // Do the recovery work OUTSIDE the socket's 'open' dispatch. Breadcrumbs show the page
+          // freezing between the leg-open status publish and this handler, i.e. inside the
+          // synchronous event dispatch: deferring it breaks that chain, so a listener that
+          // re-subscribes cannot recurse into the reopened leg on the same stack.
+          var resume = function () {
+            noteRemoteAvailable()
+            traceEvent('open-handled', { streams: remoteStreams.size })
+            replayRemoteStreams()
+            traceEvent('replay-done', { streams: remoteStreams.size })
+          }
+          if (typeof setTimeout === 'function') setTimeout(resume, 0)
+          else resume()
         }
         if (socket.readyState === 1) onOpen()
         else if (typeof socket.addEventListener === 'function') socket.addEventListener('open', onOpen)

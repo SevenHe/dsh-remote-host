@@ -39,7 +39,9 @@
    * the evidence that matters. These are forced out synchronously instead.
    */
   var TRACE_CRITICAL = {
-    'remote-open': true, 'reconnect-begin': true, 'reconnect-end': true,
+    'remote-open': true, 'open-handled': true, 'replay-enter': true, 'replay-send': true,
+    'replay-done': true, 'status-open-enter': true, 'status-open-exit': true,
+    'reconnect-begin': true, 'reconnect-end': true,
     'reconnect-nocarrier': true, 'replay-begin': true, 'replay-end': true,
     'stream-open': true, 'service-register': true, 'crash-marker': true,
   }
