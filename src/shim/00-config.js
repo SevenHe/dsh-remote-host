@@ -59,8 +59,15 @@
   var remoteFocusAt = 0
   /** Methods answered by per-host configuration rather than by Session state. */
   var MODEL_METHODS = ['llm/listProviders', 'llm/listConfigurableProviders', 'llm/discoverModels']
-  /** Focus expires so a remote Session left open cannot hijack a later local one. */
-  var REMOTE_FOCUS_TTL_MS = 15 * 60 * 1000
+  /**
+   * Focus expiry is only a safety net, not the mechanism: opening a Session this host
+   * owns clears the focus explicitly (its id arrives in that request). A short window
+   * would instead reintroduce the original bug — open a remote Session, leave it idle
+   * longer than the window, then open the model picker: the picker carries no Session
+   * id, so the focus would have lapsed and the catalogue would come from this host
+   * again. Twelve hours cannot be outlived by a working day.
+   */
+  var REMOTE_FOCUS_TTL_MS = 12 * 60 * 60 * 1000
   var remoteWorkspaceIds = new Set()
   /** Display window for remote work: recent activity, or anything still running. */
   var WINDOW_DAYS = typeof config.windowDays === 'number' && config.windowDays > 0 ? config.windowDays : 30
