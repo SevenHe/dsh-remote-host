@@ -88,8 +88,8 @@ const REMOTE_CATALOG = {
 }
 
 /** Read one decoded catalogue value through the page's own transport. */
-const readCatalog = async (page) => {
-  const response = await call(page, 'session/modelCatalog', {})
+const readCatalog = async (page, sessionId) => {
+  const response = await call(page, 'session/modelCatalog', sessionId === undefined ? {} : { sessionId })
   const body = await response.json()
   return body.result.value
 }
@@ -102,9 +102,9 @@ test('routing: the catalogue follows a remote Session focus, and is not unioned'
   await page.settle()
   // Opening the remote Session is what sets the focus.
   await mountCallsDuring(page, () => call(page, 'session/follow', { sessionId: REMOTE_SESSION }))
-  const mount = await mountCallsDuring(page, () => readCatalog(page))
+  const mount = await mountCallsDuring(page, () => readCatalog(page, REMOTE_SESSION))
   assert.deepEqual(mount, ['/devbox/api/session/modelCatalog'], 'the catalogue comes from the owner')
-  const value = await readCatalog(page)
+  const value = await readCatalog(page, REMOTE_SESSION)
   assert.deepEqual(value.default, REMOTE_CATALOG.default, 'a remote Session gets the remote default')
   assert.deepEqual(value.routableProviders, REMOTE_CATALOG.routableProviders,
     'the catalogues are NOT unioned: a local Session must not see remote-only models')
@@ -118,9 +118,9 @@ test('routing: an unreachable mount degrades the catalogue to this host', async 
   })
   await page.settle()
   await mountCallsDuring(page, () => call(page, 'session/follow', { sessionId: REMOTE_SESSION }))
-  const mount = await mountCallsDuring(page, () => readCatalog(page))
+  const mount = await mountCallsDuring(page, () => readCatalog(page, REMOTE_SESSION))
   assert.deepEqual(mount, ['/devbox/api/session/modelCatalog'], 'the mount leg is still attempted')
-  const value = await readCatalog(page)
+  const value = await readCatalog(page, REMOTE_SESSION)
   assert.deepEqual(value, LOCAL_CATALOG, 'a dead mount leaves this host catalogue untouched')
 })
 
@@ -133,9 +133,9 @@ test('routing: a persisted remote current Session picks the mount before any foc
     localStorage: { 'dsh.sessions.current': JSON.stringify({ sessionId: REMOTE_SESSION }) },
   })
   await page.settle()
-  const mount = await mountCallsDuring(page, () => readCatalog(page))
+  const mount = await mountCallsDuring(page, () => readCatalog(page, REMOTE_SESSION))
   assert.deepEqual(mount, ['/devbox/api/session/modelCatalog'], 'the persisted remote Session decides the owner')
-  const value = await readCatalog(page)
+  const value = await readCatalog(page, REMOTE_SESSION)
   assert.deepEqual(value.default, REMOTE_CATALOG.default)
 })
 
@@ -146,7 +146,7 @@ test('routing: a persisted bare-id remote Session is accepted too', async () => 
     localStorage: { 'dsh.sessions.current': REMOTE_SESSION },
   })
   await page.settle()
-  const mount = await mountCallsDuring(page, () => readCatalog(page))
+  const mount = await mountCallsDuring(page, () => readCatalog(page, REMOTE_SESSION))
   assert.deepEqual(mount, ['/devbox/api/session/modelCatalog'], 'both persisted shapes are parsed')
 })
 
@@ -157,8 +157,33 @@ test('routing: a local current Session keeps this host catalogue', async () => {
     localStorage: { 'dsh.sessions.current': JSON.stringify({ sessionId: 'local-1' }) },
   })
   await page.settle()
-  const mount = await mountCallsDuring(page, () => readCatalog(page))
+  // The current Session is local, so its catalogue read names THAT Session.
+  const mount = await mountCallsDuring(page, () => readCatalog(page, 'session-local-1'))
   assert.deepEqual(mount, [], 'a local Session never consults the mount')
-  const value = await readCatalog(page)
+  const value = await readCatalog(page, 'session-local-1')
   assert.deepEqual(value, LOCAL_CATALOG)
+})
+/**
+ * The Host-level warm-up names no Session. A Host patched to take an optional sessionId
+ * advertises a one-parameter descriptor, and the gateway client counts descriptor.parameters
+ * rather than honouring acceptsUndefined, so sending this read to such a Host makes the
+ * client throw "expected 1 argument(s), got 0" - an unhandled rejection at boot. It must
+ * stay on this host, whose descriptor takes no argument, even while a remote Session holds
+ * the focus.
+ */
+test('routing: the Session-less warm-up never reaches a Host that wants an argument', async () => {
+  const page = createPage({
+    config: { group: 'none' }, localItems: LOCAL_ITEMS, remoteItems: REMOTE_ITEMS,
+    localCatalog: LOCAL_CATALOG, remoteCatalog: REMOTE_CATALOG,
+  })
+  await page.settle()
+  // Put the page squarely on a remote Session: the focus alone used to send this read to the mount.
+  await mountCallsDuring(page, () => call(page, 'session/follow', { sessionId: REMOTE_SESSION }))
+  mountCallsDuring(page, () => {})
+  const calls = []
+  const mount = await mountCallsDuring(page, () => readCatalog(page))
+  assert.deepEqual(mount, [], 'a zero-argument catalogue read must never be routed to the mount')
+  const value = await readCatalog(page)
+  assert.deepEqual(value, LOCAL_CATALOG, 'the warm-up still gets a usable catalogue')
+  assert.deepEqual(calls, [])
 })

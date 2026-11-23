@@ -423,3 +423,32 @@ POST /devbox/api/session/create
 | ④ mount 不可达：降级 + 无风暴 + 无 unhandled rejection | 用 CDP 阻断 `*/devbox/api/session/modelCatalog*` 后重载：目录返回本机（default `modelhub-deepseek-v4.1-flash`，5 模型）；请求序列 `MOUNT,LOCAL,MOUNT,LOCAL,LOCAL`（尝试+降级），4 秒后**不再增长**；`Runtime.exceptionThrown` 与 console error 均为 **0** |
 
 远端行透传实测：112 条远端会话中 **60 条**带 `projections.values.modelSelection`（例 `{"lastUsed":{"provider":"cpa","model":"deepseek-v4.1-flash","reasoningEffort":"max"}}`）。
+
+## 模型补丁引发的 arity rejection（2026-11-23）
+
+**症状**（真实 App trace，`inst=devbox#-`）：
+
+```
+{"name":"failure","detail":{"kind":"rejection","message":"client api: session/modelCatalog expected 1 argument(s), got 0"}}
+```
+
+**根因（已定位到具体代码）**：`@deepseek-ai/dsh-api-gateway` 的客户端在发请求前做严格的**位置参数个数**校验（`lib/client.node.js`，`prepareInvocation`）：
+
+```js
+const expected = descriptor.parameters.length - (projection?.parameterIndex === void 0 ? 0 : 1)
+if (values.length !== expected && !hasCallerSignal) {
+  throw new Error(`client api: ${endpoint} expected ${contract}, got ${values.length}`)
+}
+```
+
+关键点：**它只数 `descriptor.parameters.length`，完全不看 `acceptsUndefined`**。
+
+- 我们把远端 `session/modelCatalog` 改成 `modelCatalog(sessionId?: SessionId)` 后，typert 描述符变成**1 个参数**（并正确带上了 `acceptsUndefined: true`）；
+- 官方客户端在页面启动时的 **Host 级预热**调用仍是 **0 参数**；
+- 于是该校验抛出 `expected 1 argument(s), got 0`；该异常在调用点未被捕获 → **unhandled rejection**，正是「服务不可用 → 组件级联崩」的燃料。
+
+**结论（上游必须修的点）**：服务端本身没问题 —— 描述符里 `acceptsUndefined: true`，gateway 服务端接受 0 参数。问题在**客户端 gateway 的 arity 校验没有尊重 `acceptsUndefined`**。正确做法是把 `expected` 从「固定个数」改成「必填个数到 `parameters.length` 的区间」，即尾部可选参数允许省略。在此之前，任何「给现有无参方法新增可选参数」的改法都会让**未升级的客户端**在调用点抛错。
+
+**本插件的缓解（不依赖上游）**：`session/modelCatalog` 只有在请求 **args 里确实带 `sessionId`** 时才可能被路由到 mount；**0 参数的 Host 级预热一律留在本机**（本机未打补丁，描述符 0 参数，正好匹配），并记 `catalog-prewarm-local`。同时该路由逻辑整体包了 try/catch —— 判定失败也降级为本机目录，绝不冒泡成未处理异常。
+
+单测固定了该契约：`routing: the Session-less warm-up never reaches a Host that wants an argument` —— 即使焦点在远端会话上，0 参数读取的 mount 调用次数必须为 0，且返回本机目录。
