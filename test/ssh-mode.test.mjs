@@ -116,3 +116,20 @@ test('ssh mode: killing a tunnel leaves no child behind', async () => {
   for (let i = 0; i < 40; i += 1) { await tick(25); if (!alive()) { gone = true; break } }
   assert.ok(gone, 'killing the tunnel must reap the whole process group')
 })
+/**
+ * A stopped ssh ignores SIGTERM, and while it lives it keeps the forwarded port: a rebuild
+ * would then bind a port owned by a corpse and the readiness probe would be answered by the
+ * stale listener. The kill must escalate.
+ */
+test('ssh mode: killing a stopped tunnel still releases it', async () => {
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore', detached: true })
+  const alive = () => { try { process.kill(child.pid, 0); return true } catch { return false } }
+  await tick(50)
+  process.kill(child.pid, 'SIGSTOP')
+  await tick(50)
+  assert.ok(alive(), 'the stand-in child must be stopped, not gone')
+  killTunnel(child)
+  let gone = false
+  for (let i = 0; i < 60; i += 1) { await tick(50); if (!alive()) { gone = true; break } }
+  assert.ok(gone, 'a stopped tunnel must be killed, not left holding the port')
+})
