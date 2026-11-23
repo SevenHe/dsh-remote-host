@@ -321,3 +321,31 @@ POST /devbox/api/session/create
 **lab 实测**（19967，插件指向本分支；upstream 为本机私有 DSH 实例，真实远端会话 9 条）：把 `localStorage[dsh.sessions.current]` 指向一条**远端** sessionId 后重载，Network 抓到的 `session/create`：**mount 0 / local 0**；`workspace/not-found` 类日志 **0 条**；composer `contenteditable=true`、无「会话不可用」。
 
 **不回归**：claim 行仍 `display: none`（远端行不可见、不泄漏进原生列表）；composer 可用；`npm run check` 49/49。
+
+### 补充：rpc 载体同修 + 路由判据审计（2026-11-23）
+
+**为什么必须补**：桌面壳发布 `__DSH_TRANSPORT__` 且可能带 `rpc`；shim 在 `diag.hasRpc === true && typeof base.rpc.call === 'function'` 时用 rpc 覆盖 fetch 包装（`src/shim/80-install.js` 的 rpc 分支）。只修 fetch 分支的话，**在最关键的那个部署上等于没修**。
+
+**改动**：`80-install.js` 的 rpc 分支（原第 149 行）对 `session/create` 也走 `createTarget()`；claim 用新helper `withoutWorkspaceId()`（`10-state.js`）改写——rpc 载体拿到的是 payload **对象**而非 JSON body，所以需要对象级重写（`dropWorkspaceId` 仍是 fetch 的 body 字符串变体），且不修改调用方的 payload。
+
+**rpc 用例 before / after**（同一组断言）：
+
+| 断言 | 修前 shim (5268140) | 修后 shim |
+|---|---|---|
+| rpc carrier：本地工作区的 create 不得到达 mount | **FAIL**（the mount must not receive a create for a local workspace） | **PASS** |
+| rpc carrier：claim 的 create 到达本地载体且无 workspaceId | **FAIL**（the claim workspaceId is dropped before the local carrier sees it） | **PASS** |
+
+命令：`DRH_SHIM=/tmp/old-shim.js node --test test/create-routing.test.mjs` → 4 fail；`node --test test/create-routing.test.mjs` → 4 pass。测试助手 `test/helpers/page.mjs` 新增 `options.rpc` 可种一个解码后的 rpc 载体并记录调用（`rpcCalls` / `rpcCallsFor`）。
+
+**路由判据审计**（登记在 `src/shim/20-transport.js` 决策点注释里，本次只改 session/create）：
+
+| 类别 | 端点 | 判定 |
+|---|---|---|
+| 工作区作用域 | `session/create` | **已修**：按 `workspaceId` 判定 |
+| 工作区作用域（待收） | `workspace/{rename,delete,insertBefore,insertSessionBefore}` | 仍是子串命中。今天成立只因远端工作区发布为 `drh:<raw>` 且 `<raw> ∈ remoteWorkspaceIds`，文本里天然含 raw id；本地工作区 id 不可能包含它。与 create 同型脆弱，下一版按 `workspaceId` 收 |
+| 路径作用域 | `directoryPicker/*` | payload 无 id，不会被路由，安全 |
+| 会话作用域 | `session/{follow,events,state,page,projections,prompt,cancel,rename,fork,updateQueue,wait,attachment,selectModel}` | 子串判定**正确**：被点名的 id 就是主体（含 `address.sessionId` 形式） |
+| 特例 | `session/list`、`$events`、`$events/result` | 走合并 / 事件结果改写，不走该判据 |
+| 宿主全局（风险） | `settings/*`、`pluginManager/*`、`pluginInventory/*`、`agentPresets/list`、`permissionPresets/catalog`、`skills/list`、`schedule/*`、`speech/*`、`messageFeedback/*`、`workspaceFiles/*` | 无会话/工作区主体，只有「路径或标题里恰好出现某个 id」才会误路由；保持现状，`workspaceFiles` 的路径含 id 是最现实的一条 |
+
+`npm run check`：51/51。
