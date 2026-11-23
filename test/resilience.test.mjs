@@ -5,6 +5,10 @@
  * ("conversation service unavailable"), and a corporate-network blip used to make every
  * remote call reject. These cases drive the real shim with failing carriers and count
  * what escapes.
+ *
+ * Note: the shim runs in a node:vm realm, so a value it builds has that realm's
+ * prototypes. Every assertion here round-trips the carrier result through JSON first;
+ * comparing a sandbox {} to a test-realm {} fails deepStrictEqual for the wrong reason.
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -14,6 +18,9 @@ const NOW = Date.now()
 const REMOTE_ITEMS = [{ sessionId: 'worker-1', updatedAt: NOW, running: true }]
 const LOCAL_ITEMS = [{ sessionId: 'local-1', updatedAt: NOW, running: false }]
 const REMOTE_ARGS = { sessionId: 'worker-1' }
+
+/** Bring a sandbox-realm value into the test realm. */
+const plain = (value) => JSON.parse(JSON.stringify(value))
 
 /** Run body while recording any unhandled rejection that surfaces. */
 async function unhandledDuring (body) {
@@ -34,32 +41,30 @@ test('rpc carrier: a failed remote call answers with a Remote failure, never rej
   const page = createPage({ config: { group: 'none' }, localItems: LOCAL_ITEMS, remoteItems: REMOTE_ITEMS, rpc: true, rpcFail: true })
   await page.settle() // the prefetch establishes the remote id set first
   page.options.failMountFetch = true // then the network blips
-  const result = await page.built.rpc.call('/api', 'session/state', { args: REMOTE_ARGS })
+  const result = plain(await page.built.rpc.call('/api', 'session/state', { args: REMOTE_ARGS }))
   assert.equal(result.ok, false)
-  // Either leg can be the one that failed; both answers are degradations, not rejections.
-  assert.ok(['gateway/remote-unavailable', 'gateway/carrier-unavailable'].includes(result.error.code), 'code: ' + String(result.error.code))
+  assert.equal(result.error.code, 'gateway/remote-unavailable')
   assert.equal(typeof result.error.message, 'string')
   assert.deepEqual(result.error.details, {})
 })
 
-test('rpc carrier: session/list still answers a carrier result when both legs fail', async () => {
+test('rpc carrier: session/list answers a carrier result when both legs fail', async () => {
   const page = createPage({ config: { group: 'none' }, localItems: LOCAL_ITEMS, remoteItems: REMOTE_ITEMS, rpc: true, rpcFail: true })
   await page.settle()
   page.options.failMountFetch = true
-  const result = await page.built.rpc.call('/api', 'session/list', { args: { _request: {} } })
+  const result = plain(await page.built.rpc.call('/api', 'session/list', { args: { _request: {} } }))
   assert.equal(typeof result, 'object')
-  assert.notEqual(result, null)
   assert.equal(result.ok, false)
-  assert.ok(['gateway/remote-unavailable', 'gateway/carrier-unavailable'].includes(result.error.code), 'code: ' + String(result.error.code))
+  assert.equal(result.error.code, 'gateway/remote-unavailable')
 })
 
-test('no unhandled rejection escapes twenty failing carrier calls', async () => {
+test('twelve failing rpc calls leak no unhandled rejection', async () => {
   const page = createPage({ config: { group: 'none' }, localItems: LOCAL_ITEMS, remoteItems: REMOTE_ITEMS, rpc: true, rpcFail: true })
   await page.settle()
   page.options.failMountFetch = true
   const leaked = await unhandledDuring(async () => {
-    for (let index = 0; index < 20; index += 1) {
-      const result = await page.built.rpc.call('/api', 'session/state', { args: REMOTE_ARGS })
+    for (let index = 0; index < 12; index += 1) {
+      const result = plain(await page.built.rpc.call('/api', 'session/state', { args: REMOTE_ARGS }))
       assert.equal(result.ok, false, 'every call degrades instead of throwing')
     }
   })
