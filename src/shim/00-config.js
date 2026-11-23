@@ -80,6 +80,15 @@
    * keeps the shipped socket untouched and only merges unary traffic.
    */
   var STREAMS = config.streams === true
+  /**
+   * Direction 1: do not own the remote stream connection.
+   *
+   * With this on, the mux URL is only rewritten to the mounted path and handed back to the
+   * shipped connection layer, which owns the socket and its reconnect. Creating reconnect
+   * sockets ourselves is what killed the renderer (SIGTRAP / brk #0); the shipped layer
+   * survives the same flap. Off by default so the existing router stays the default path.
+   */
+  var STREAM_RELAY = config.streamRelay === true
   /** The catch-all global WebSocket replacement; the carrier factory is always patched. */
   var GLOBAL_WS = config.globalWebSocket !== false
   /**
