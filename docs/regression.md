@@ -252,3 +252,35 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 **两处真实差异：circle r 9.5（非 9）、槽位 16×20（非 14×14）。** dasharray 是动画中途采样，不能当声明值用。按任务要求只报数值、未改代码。
 
 **#6 左右并排截图：未交付（卡点）。** 两次尝试都拿到右侧（远端）与左侧（本地）的 clip，但在页面内用 `<img>` 合成后整幅截图是空白（疑与 `Emulation.setDeviceMetricsOverride` 和 `Page.captureScreenshot` 的 clip+scale 叠加有关）；第三次尝试单次 clip 同时覆盖两行时 CDP 报错退出。`/tmp/spinner-side-by-side.png` 存在但内容无效（1740×260 几乎全白），**不要当成证据使用**。下一步建议：分别用 `Page.captureScreenshot` 取两张 clip 后，用外部工具（如 `sips`/ImageMagick）离线拼接，避免页内合成。
+
+## 远端会话「只能看、不能继续聊天」的根因与实测（2026-11-23）
+
+**现象**：点开「远端工作区」里的远端会话，主区域能渲染完整内容，但 composer 变成不可用态（本机 build 显示「会话不可用」/`contenteditable=false`，另一处文案为「选择一个工作区开始」），无法发送、无法继续对话。
+
+**根因**：`lib/client.js` 的 `openRemoteSession()` 为了让 `sessions.retain` 接受一个客户端目录里还没有的远端会话，会先用 `manager.handleSessionAdded(row)` 注入一行，`openSession` 之后再在 `.then`/同步路径里调用 `drop()` → `manager.handleSessionRemoved(sessionId)`，把这一行删掉。composer 是否可用取决于该会话是否仍在客户端 catalog 里，删掉后 composer 立刻退化为不可用态——**transcript 能看，是因为渲染走的是已打开的主视图；不能发，是因为 catalog 里已经没有这条会话**。
+
+**修法**：新增 `settle()`，打开成功后**保留** catalog 行（仅当 shim 已把该 id 归为远端——`remoteState().ids` 命中）；否则仍按旧行为删除。保留不会让远端行泄漏进原生列表，因为 `group: none` 下 shim 发布的隐藏 claim Workspace（`workspace:drh:claim`）已经认领了所有已发布的远端 id，其行被 block 样式表隐藏。
+
+**实测（lab 19963 插件指向本分支，upstream 为私有 19965 实例，headless Chrome + CDP，真实远端会话）**：
+
+| 项目 | 修前 | 修后 |
+|---|---|---|
+| 打开远端会话后 composer 文本 | `会话不可用` | `发消息或创建任务, / 调用指令, @ 文件或对话` |
+| `contenteditable` | `false` | **`true`** |
+| 页面出现「会话不可用」 | `true` | **`false`** |
+
+**发送链路实测**（修后在 composer 输入 `probe ping from drh-chat` 并点「发送消息」），Network 抓到的请求：
+
+```text
+/devbox/api/session/prompt    method: "session/prompt"    mounted: true
+/devbox/api/session/attachment method: "session/attachment" mounted: true
+```
+
+即 prompt 被 shim 路由到了 mount（`mounted: true`），不是发到本地 host。
+
+**不回归实测**：
+
+- 远端行不泄漏到原生列表：shipped 树里 remote id 的 2 行 `getBoundingClientRect()` 宽高为 0 且 `offsetParent === null`（不可见），可见泄漏计数 `visibleRemoteLeaks = 0`；隐藏 claim 行 `display: none` 符合设计。
+- 切回本地会话高亮清除：点可见的本地区会话行后，块内 `selected` 行数 `1 → 0`，composer 保持可用（`contenteditable=true`，无「会话不可用」）。
+
+**注意（lab 配方坑）**：profile 的 `node_modules` 若整体软链到 `~/.dsh/profiles/desktop/node_modules`，其中 `dsh-remote-host` 指向主 checkout，改 profile `package.json` 的 `link:` 依赖不生效。必须逐项软链后单独把 `dsh-remote-host` 指向 worktree，并用 `readlink -f <profile>/node_modules/dsh-remote-host/lib/client.js` 确认，否则测的是旧代码。
