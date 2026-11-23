@@ -72,7 +72,9 @@ export function createPage(options = {}) {
   const config = { mount: '/devbox', label: 'devbox', streams: true, ...options.config }
   const localItems = options.localItems ?? []
   const remoteItems = options.remoteItems ?? []
-  const calls = { local: [], mount: [], sockets: [] }
+  // bodies are recorded alongside the paths so a test can assert on a rewritten request
+  // (the claim-workspace create drops its workspaceId before the local Host sees it).
+  const calls = { local: [], mount: [], sockets: [], bodies: { local: [], mount: [] } }
   const sockets = new Map()
   const clientFrames = []
 
@@ -88,6 +90,8 @@ export function createPage(options = {}) {
     // relative) and '/devbox/api/x' (the mount), and assertions want one form.
     const path = '/' + url.replace(/^https?:\/\/[^/]+/, '').replace(/^\/+/, '')
     const isMount = path === config.mount || path.startsWith(config.mount + '/')
+    const leg = isMount ? 'mount' : 'local'
+    if (typeof init?.body === 'string') calls.bodies[leg].push({ path, body: init.body })
     if (isMount) {
       calls.mount.push(path)
       if (path.endsWith('/api/session/list')) {
@@ -168,12 +172,25 @@ export function createPage(options = {}) {
   }
 
   /**
+   * Calls the page's own carrier received, when a test seeds a fully decoded rpc carrier.
+   * The desktop shell publishes this shape, and the shim wraps it instead of fetch, so its
+   * routing decisions need the same assertions as the fetch path.
+   */
+  const rpcCalls = []
+  const rpcCall = async (channel, endpoint, payload) => {
+    rpcCalls.push({ channel, endpoint, payload })
+    if (endpoint === 'session/list') return envelope({ items: localItems })
+    return envelope({})
+  }
+
+  /**
    * Every socket the page opens goes through here so tests can drive both legs.
    * Passing carrier:false withholds it entirely, which is how a test reproduces a
    * shell that publishes its carrier only after this script has run.
    */
   sandbox.__DSH_TRANSPORT__ = options.carrier === false ? undefined : {
     fetch: fetchImpl,
+    ...options.rpc === true ? { rpc: { call: rpcCall } } : {},
     createWebSocket: (url) => {
       const kind = String(url).includes(config.mount) ? 'remote' : 'local'
       const socket = new FakeSocket(url, kind)
@@ -218,6 +235,10 @@ export function createPage(options = {}) {
     openMux,
     /** Paths the shim called on one leg, excluding the Host's own diagnostics posts. */
     apiCalls: (kind) => calls[kind].filter((path) => path.includes('/api/')),
+    /** Calls the seeded rpc carrier received, in order. */
+    rpcCalls,
+    /** rpc carrier calls for one endpoint. */
+    rpcCallsFor: (endpoint) => rpcCalls.filter((entry) => entry.endpoint === endpoint),
     /** Frames the router sent to one upstream leg. */
     sent: (kind) => sockets.get(kind)?.sent ?? [],
     /** Frames the router sent to the client, optionally filtered. */
