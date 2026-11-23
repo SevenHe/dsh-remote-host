@@ -51,23 +51,25 @@
   var NativeWebSocket = globalThis.WebSocket
   var remoteSessions = new Set()
   /**
-   * When a remote Session was last the page's focus. Mount-scoped config reads (the
-   * model catalogue) carry no session id, so refersRemote() cannot route them; they
-   * must follow whichever host owns the Session being viewed, or the picker lists
-   * this host's models and the remote rejects the prompt.
+   * When a remote Session was last the page's focus.
+   *
+   * The client fetches session/modelCatalog once per page load, before it restores the
+   * previous Session, so that request carries no Session id and cannot be routed by its
+   * payload. Two clues decide the owner instead: this focus (set as soon as any request
+   * names a remote Session) and, on a cold start, the Session the client persisted as
+   * current (persistedCurrentSessionIsRemote). The catalogue is NOT merged: the two hosts
+   * may legitimately serve different model lists, and a union would offer a local Session a
+   * remote-only model that fails when it is selected.
    */
   var remoteFocusAt = 0
-  /** Methods answered by per-host configuration rather than by Session state. */
-  var MODEL_METHODS = ['llm/listProviders', 'llm/listConfigurableProviders', 'llm/discoverModels']
   /**
-   * Focus expiry is only a safety net, not the mechanism: opening a Session this host
-   * owns clears the focus explicitly (its id arrives in that request). A short window
-   * would instead reintroduce the original bug — open a remote Session, leave it idle
-   * longer than the window, then open the model picker: the picker carries no Session
-   * id, so the focus would have lapsed and the catalogue would come from this host
-   * again. Twelve hours cannot be outlived by a working day.
+   * Focus expiry is only a safety net, not the mechanism: opening a Session this host owns
+   * clears the focus explicitly (its id arrives in that request). The catalogue is cached
+   * for the page lifetime anyway, so a lapsed window surfaces as the reload limitation
+   * documented in docs/regression.md, not as a silent misroute.
    */
   var REMOTE_FOCUS_TTL_MS = 12 * 60 * 60 * 1000
+  /** Workspace ids the mounted host reported for itself (used by createTarget only). */
   var remoteWorkspaceIds = new Set()
   /** Display window for remote work: recent activity, or anything still running. */
   var WINDOW_DAYS = typeof config.windowDays === 'number' && config.windowDays > 0 ? config.windowDays : 30

@@ -94,6 +94,10 @@ export function createPage(options = {}) {
     if (typeof init?.body === 'string') calls.bodies[leg].push({ path, body: init.body })
     if (isMount) {
       calls.mount.push(path)
+      if (path.endsWith('/api/session/modelCatalog')) {
+        if (options.failRemoteCatalog === true) return { ok: false, status: 502, json: async () => ({}) }
+        return respond(options.remoteCatalog === undefined ? {} : options.remoteCatalog)
+      }
       if (path.endsWith('/api/session/list')) {
         if (options.failRemote === true) return { ok: false, status: 502, json: async () => ({}) }
         // A function form lets one test change the answer between calls.
@@ -102,6 +106,7 @@ export function createPage(options = {}) {
       return { ok: true, status: 200, json: async () => envelope({}) }
     }
     calls.local.push(path)
+    if (path.endsWith('/api/session/modelCatalog')) return respond(options.localCatalog === undefined ? {} : options.localCatalog)
     if (path.endsWith('/api/session/list')) return respond({ items: localItems })
     return respond({})
   }
@@ -149,6 +154,17 @@ export function createPage(options = {}) {
       constructor(type, init) { this.type = type; this.detail = init?.detail }
     },
   }
+  /**
+   * Minimal localStorage: the shim reads the client's persisted current Session as a
+   * cold-start clue for the model catalogue owner, so a test has to be able to seed it.
+   */
+  const stored = new Map(Object.entries(options.localStorage === undefined ? {} : options.localStorage))
+  sandbox.localStorage = {
+    getItem: (key) => (stored.has(key) ? stored.get(key) : null),
+    setItem: (key, value) => { stored.set(key, String(value)) },
+    removeItem: (key) => { stored.delete(key) },
+  }
+
   sandbox.globalThis = sandbox
   sandbox.window = sandbox
   sandbox.self = sandbox

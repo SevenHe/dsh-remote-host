@@ -98,18 +98,18 @@
       if (request.method === 'session/create') {
         return createTarget(request.payload) === 'remote' || isClaimCreate(request.payload) === true
       }
-      // Mount-scoped configuration: the model catalogue lists what THIS host can run,
-      // and its request carries no session id, so it must follow the focused Session.
-      if (modelScopedMethod(request.method)) return remoteFocused()
+      // The catalogue carries no Session id, but it does need an owner; routeFetch decides
+      // that from the focus/persistence clues, so this request must be handled there.
+      if (request.method === 'session/modelCatalog') return true
       return refersRemote(request.payload) === true
     } catch (error) { return false }
   }
 
   /**
-   * Follow which host owns the Session the page is looking at. Opening a Session
-   * reads it (and follows its stream) with its id in the payload, so ordinary
-   * traffic carries the answer; a Session id this host does not own hands the
-   * focus back, which is why local pass-throughs must be observed too.
+   * Follow which host owns the Session the page is looking at. Opening a Session reads it
+   * (and follows its stream) with its id in the payload, so ordinary traffic carries the
+   * answer; a Session id this host does not own hands the focus back, which is why local
+   * pass-throughs must be observed too.
    * @param request - parsed client request, when the body was a JSON envelope.
    */
   function trackSessionFocus(request) {
@@ -119,34 +119,51 @@
   }
 
   /**
-   * Bound for a mount-scoped configuration read. The renderer awaits it while
-   * building the picker, so a mount that stopped answering must not hold the
-   * promise open; the plugin's rule is that every awaited remote call is bounded
-   * and degrades to this host.
+   * Bound for the mount catalogue read. The client awaits it while booting, so a mount that
+   * stopped answering must not hold the promise open.
    */
-  var MODEL_READ_TIMEOUT_MS = 2500
+  var CATALOG_READ_TIMEOUT_MS = 2500
 
-  /** Compose the caller's signal with the model-read bound, when the runtime has both. */
-  function boundedSignal(signal) {
+  /** Compose the caller's signal with the catalogue bound, when the runtime has both. */
+  function catalogSignal(signal) {
     try {
       if (typeof AbortSignal !== 'object' || AbortSignal === null) return signal
       if (typeof AbortSignal.timeout !== 'function') return signal
-      var bound = AbortSignal.timeout(MODEL_READ_TIMEOUT_MS)
+      var bound = AbortSignal.timeout(CATALOG_READ_TIMEOUT_MS)
       if (signal === undefined || signal === null) return bound
       return typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, bound]) : signal
     } catch (error) { return signal }
   }
 
-  /** Read a mount-scoped answer within the bound, falling back to this host. */
-  function modelReadWithFallback(input, init, method) {
+  /**
+   * Answer session/modelCatalog from the host that owns the Session being viewed.
+   *
+   * The catalogue is NOT merged: the two hosts may serve different model lists, and a union
+   * would offer a local Session a remote-only model (and the reverse), which fails the moment
+   * it is selected. The owner is decided by catalogOwnedByMount(); when the answer must come
+   * from the mount, the read is bounded and degrades to this host.
+   */
+  function routeModelCatalog(input, init) {
+    var remote = catalogOwnedByMount()
+    note('catalog-owner', { remote: remote, focus: remoteFocused(), persisted: persistedCurrentSessionIsRemote() })
+    if (remote !== true) return localFetch(input, init)
     var bounded = {}
     if (init !== undefined && init !== null) {
       for (var key in init) { if (Object.prototype.hasOwnProperty.call(init, key)) bounded[key] = init[key] }
     }
-    bounded.signal = boundedSignal(init === undefined || init === null ? undefined : init.signal)
-    return localFetch(mountUrl(input), bounded).catch(function (error) {
+    bounded.signal = catalogSignal(init === undefined || init === null ? undefined : init.signal)
+    return localFetch(mountUrl(input), bounded).then(function (response) {
+      // A dead mount can answer with an error status instead of rejecting, so both shapes
+      // must degrade; only a successful answer is usable.
+      if (response !== null && response !== undefined && response.ok === true) return response
       note('route-local-fallback', {
-        method: method,
+        method: 'session/modelCatalog',
+        reason: 'mount status ' + String(response === null || response === undefined ? 'none' : response.status),
+      })
+      return localFetch(input, init)
+    }).catch(function (error) {
+      note('route-local-fallback', {
+        method: 'session/modelCatalog',
         reason: String(error !== null && error !== undefined && error.message !== undefined ? error.message : error).slice(0, 80),
       })
       return localFetch(input, init)
@@ -169,6 +186,7 @@
     }
     trackSessionFocus(request)
     if (method === 'session/list') return mergeSessionList(input, init, request)
+    if (method === 'session/modelCatalog') return routeModelCatalog(input, init)
     if (method === EVENT_RESULT_ENDPOINT) {
       var rewritten = rewriteEventResult(init)
       if (rewritten !== undefined) return localFetch(mountUrl(input), rewritten)
@@ -187,13 +205,10 @@
       if (claimless !== undefined) note('claim-create-local', { method: method })
       return localFetch(input, claimless === undefined ? init : claimless)
     }
-    // Two ways to belong to the mounted host: the payload names one of its Sessions,
-    // or the method is per-host configuration and that host owns the focused Session.
-    var remote = request !== undefined && (refersRemote(request.payload)
-      || (modelScopedMethod(method) && remoteFocused()))
+    // The payload names one of the mounted host's Sessions.
+    var remote = request !== undefined && refersRemote(request.payload)
     if (remote) {
       note('route-remote', { method: method })
-      if (modelScopedMethod(method)) return modelReadWithFallback(input, init, method)
       return localFetch(mountUrl(input), init)
     }
     return localFetch(input, init)
@@ -226,4 +241,3 @@
       return url.length >= 15 && url.slice(-15) === '/api/remote.mux'
     }
   }
-

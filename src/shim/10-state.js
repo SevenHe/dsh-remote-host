@@ -108,12 +108,7 @@
     return hit
   }
 
-  /** Whether this method is answered by per-host configuration, not Session state. */
-  function modelScopedMethod(method) {
-    return typeof method === 'string' && MODEL_METHODS.indexOf(method) !== -1
-  }
-
-  /** Whether a remote Session was the page's focus recently enough to own config reads. */
+  /** Whether a remote Session was the page's focus recently enough to own the catalogue. */
   function remoteFocused() {
     return remoteFocusAt > 0 && Date.now() - remoteFocusAt < REMOTE_FOCUS_TTL_MS
   }
@@ -138,6 +133,85 @@
       var text = JSON.stringify(value)
       return typeof text === 'string' && text.indexOf('"sessionId"') !== -1
     } catch (error) { return false }
+  }
+
+  /**
+   * Whether the Session the client persisted as "current" belongs to the mounted host.
+   *
+   * The catalogue request happens before the client restores that Session, so at a cold
+   * start the focus above is still empty. The persisted value is the only clue available
+   * that early. It is written in two shapes by the shipping client (a JSON object
+   * { sessionId } and a bare id string), so both are accepted; anything unreadable or
+   * unknown is treated as local, which keeps a local Session's behaviour unchanged.
+   * @returns true only when the persisted id is a Session this shim already knows is remote.
+   */
+  function persistedCurrentSessionIsRemote() {
+    try {
+      var storage = globalThis.localStorage
+      if (storage === null || storage === undefined || typeof storage.getItem !== 'function') return false
+      var raw = storage.getItem('dsh.sessions.current')
+      if (typeof raw !== 'string' || raw.length === 0) return false
+      var sessionId = raw
+      if (raw.charAt(0) === '{') {
+        var parsed = JSON.parse(raw)
+        sessionId = parsed !== null && typeof parsed === 'object' && typeof parsed.sessionId === 'string' ? parsed.sessionId : ''
+      }
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return false
+      return remoteSessions.has(sessionId) === true
+    } catch (error) {
+      return false
+    }
+  }
+
+  /**
+   * Which host owns the model catalogue for this page load.
+   *
+   * 1. remote focus: a request already named a remote Session, so the user is looking at one;
+   * 2. cold start: the Session the client persisted as current is remote (see above);
+   * 3. otherwise this host, so a local Session's catalogue is exactly what it was before.
+   * @returns true when the mounted host should answer.
+   */
+  function catalogOwnedByMount() {
+    if (remoteFocused() === true) return true
+    return persistedCurrentSessionIsRemote() === true
+  }
+
+  /**
+   * Projections a published summary may carry, bounded.
+   *
+   * The block state is the only source for a remote row (group: none keeps remote rows
+   * out of the shipped list), and the client injects that summary into its catalog before
+   * opening the Session. Without projections the injected row carries no modelSelection,
+   * so the composer shows the model placeholder even though the remote Session has a saved
+   * selection. The whole values block is passed through when it is small, otherwise the
+   * payload keeps only what a row or the composer needs.
+   */
+  var PROJECTION_VALUES_MAX_BYTES = 8192
+
+  /**
+   * @param projections - the remote list row's projections block.
+   * @returns the block to publish, or undefined when there is nothing safe to send.
+   */
+  function projectionsForPublish(projections) {
+    if (projections === null || typeof projections !== 'object') return undefined
+    var values = projections.values
+    if (values === null || typeof values !== 'object') return undefined
+    var kept = {}
+    if (typeof projections.kind === 'string') kept.kind = projections.kind
+    if (typeof projections.asOfSeq === 'number') kept.asOfSeq = projections.asOfSeq
+    try {
+      if (JSON.stringify(values).length <= PROJECTION_VALUES_MAX_BYTES) {
+        kept.values = values
+        return kept
+      }
+    } catch (error) { /* fall through to the trimmed copy */ }
+    // Too large to publish whole: keep the fields a row and the composer read.
+    var trimmed = {}
+    if (values.modelSelection !== undefined) trimmed.modelSelection = values.modelSelection
+    if (values.agentPreset !== undefined) trimmed.agentPreset = values.agentPreset
+    if (values.title !== undefined) trimmed.title = values.title
+    kept.values = trimmed
+    return kept
   }
 
   function envelope(rpcId, value) {
@@ -188,6 +262,11 @@
       if (typeof raw.parentSessionId === 'string' && raw.parentSessionId.length > 0) entry.parentSessionId = raw.parentSessionId
       if (typeof raw.formatStatus === 'string' && raw.formatStatus.length > 0) entry.formatStatus = raw.formatStatus
       if (typeof raw.asOfSeq === 'number') entry.asOfSeq = raw.asOfSeq
+      // Carry the saved model selection (and the rest of the bounded values) through to the
+      // catalog row the client injects, so the composer can resolve the remote Session's
+      // model instead of falling back to the placeholder.
+      var publishable = projectionsForPublish(raw.projections)
+      if (publishable !== undefined) entry.projections = publishable
       published.push(entry)
     }
     globalThis.__DSH_REMOTE_HOST_SESSIONS__ = published

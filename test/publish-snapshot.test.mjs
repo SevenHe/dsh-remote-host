@@ -41,7 +41,9 @@ async function publish(remoteItems) {
 test('publish: an entry carries exactly the block contract', async () => {
   const { published } = await publish([row()])
   assert.equal(published.length, 1)
-  assert.deepEqual(Object.keys(published[0]), ['id', 'title', 'updatedAt', 'running', 'cwd'])
+  // projections rides along now: the client injects this row into its catalog and needs the
+  // saved model selection (and the other bounded values) to resolve the composer's model.
+  assert.deepEqual(Object.keys(published[0]), ['id', 'title', 'updatedAt', 'running', 'cwd', 'projections'])
   assert.equal(published[0].id, REMOTE_SESSION)
 })
 
@@ -63,7 +65,7 @@ test('publish: the id itself is the last-resort title', async () => {
 test('publish: no cwd key when the remote row carries none', async () => {
   const { published } = await publish([row({ cwd: undefined })])
   assert.equal(Object.hasOwn(published[0], 'cwd'), false)
-  assert.deepEqual(Object.keys(published[0]), ['id', 'title', 'updatedAt', 'running'])
+  assert.deepEqual(Object.keys(published[0]), ['id', 'title', 'updatedAt', 'running', 'projections'])
 })
 
 test('publish: missing updatedAt becomes null and running is strictly boolean', async () => {
@@ -121,4 +123,24 @@ test('state: an empty refresh keeps the last good id set', async () => {
     [REMOTE_SESSION],
     'a blank refresh must not un-publish the set',
   )
+})
+test('publish: the saved model selection rides along so the composer can resolve it', async () => {
+  const modelSelection = {
+    lastUsed: { provider: 'cpa', model: 'deepseek-v4.1-flash', reasoningEffort: 'max' },
+    next: { provider: 'cpa', model: 'deepseek-v4.1-flash', reasoningEffort: 'max' },
+  }
+  const { published } = await publish([row({ projections: { kind: 'sequenced', asOfSeq: 9, values: { title: 't', modelSelection } } })])
+  assert.deepEqual(published[0].projections.values.modelSelection, modelSelection,
+    'the injected catalog row needs the selection, or the model slot shows the placeholder')
+  assert.equal(published[0].projections.asOfSeq, 9)
+})
+
+test('publish: an oversized values block is trimmed but keeps the model selection', async () => {
+  const modelSelection = { lastUsed: { provider: 'cpa', model: 'deepseek-v4.1-flash' } }
+  const huge = { title: 't', modelSelection, blob: 'x'.repeat(8192) }
+  const { published } = await publish([row({ projections: { kind: 'sequenced', asOfSeq: 3, values: huge } })])
+  const values = published[0].projections.values
+  assert.deepEqual(values.modelSelection, modelSelection, 'the selection survives trimming')
+  assert.equal(Object.hasOwn(values, 'blob'), false, 'the oversized payload is not published')
+  assert.equal(published[0].projections.asOfSeq, 3)
 })

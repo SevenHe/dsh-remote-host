@@ -88,8 +88,8 @@
         }
         return localFetch(input, init)
       }
-      // Local pass-throughs must be observed as well: opening a Session this host
-      // owns is what hands the mount-scoped configuration reads back to it.
+      // Local pass-throughs must be observed as well: opening a Session this host owns is
+      // what hands the model catalogue back to it.
       trackSessionFocus(requestOf(init))
       if (wouldRoute(input, init) !== true) return localFetch(input, init)
       return routeFetch(input, init).catch(function () { return localFetch(input, init) })
@@ -163,13 +163,14 @@
             if (claimless !== undefined) note('claim-create-local', { endpoint: endpoint })
             return baseRpc.call(channel, endpoint, claimless === undefined ? payload : claimless, signal)
           }
-          // The desktop shell decodes this carrier instead of fetch, so mount-scoped
-          // configuration reads have to be routed here too, or the picker keeps
-          // listing this host's models for a Session the mount will run.
+          // The shell decodes this carrier instead of fetch, and it asks for the catalogue the
+          // same way, so the owner decision has to exist here too.
           trackSessionFocus({ method: endpoint, payload: payload })
-          if (modelScopedMethod(endpoint) && remoteFocused()) {
-            note('route-remote', { endpoint: endpoint })
-            return remoteUnary(endpoint, payload, boundedSignal(signal)).catch(function () {
+          if (endpoint === 'session/modelCatalog') {
+            var ownedByMount = catalogOwnedByMount()
+            note('catalog-owner', { remote: ownedByMount, carrier: 'rpc' })
+            if (ownedByMount !== true) return baseRpc.call(channel, endpoint, payload, signal)
+            return remoteUnary(endpoint, payload, catalogSignal(signal)).catch(function () {
               note('route-local-fallback', { method: endpoint, reason: 'mount failed' })
               return baseRpc.call(channel, endpoint, payload, signal)
             })
