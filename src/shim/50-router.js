@@ -142,6 +142,8 @@
     var reconnectPending = false
     /** Synchronous re-entry depth of reconnectRemote (should stay 1). */
     var reconnectDepth = 0
+    /** Experiment A: one-shot deferral of the socket creation. */
+
     /** Real JS call-stack depth; native stack exhaustion is a brk with no message, so measure. */
     function stackDepthNow() {
       try { return new Error().stack.split(String.fromCharCode(10)).length } catch (error) { return -1 }
