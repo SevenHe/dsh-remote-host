@@ -48,7 +48,7 @@
 代码侧观察（只读，未改）：
 - `openSshTunnel()` 里 `spawn('ssh', …)` **没有 `child.on('error')` 监听**（只轮询 `exitCode`）。当 `ssh` 二进制不存在（ENOENT）时会走 EventEmitter 未处理 `error` 路径；本例 ssh 存在，故未触发。
 - `stderr += String(chunk).slice(0, 400)` 是**无界累加**（每 chunk 截 400 字，但总量不封顶）。ssh 反复输出时会持续增长 — 属于隐患，未见与 brk 相关。
-- **注意版本差异**：当前主 checkout 的插件日志里已出现 `ssh tunnel: retry 1 in 500ms … retry 5 in 8000ms`（指数退避重试），而我 lab 用的 worktree 副本是单次尝试的旧版本。ssh 代码正在被改动，取证需要对**最终版本**重跑。
+- **版本差异（已逐行核对代码，重要）**：`main@e2c0f52` 的 `lib/index.js` 里 `openSshTunnel()` 是**单次尝试**版本（60 × 200ms 轮询后失败即 `throw`），**没有**退避重试。但共用日志 `/tmp/dsh-remote-host.log` 里出现过 `ssh tunnel: retry 1 in 500ms … retry 5 in 8000ms` —— 说明当时有**另一份未提交的 ssh 实现**在跑（P0 分支的实验），不是 main。**结论**：本文关于 ssh 行为的所有结论只对 `main@e2c0f52` 成立；ssh 代码定稿后必须用同一套方法重跑本取证，因为退避重试会改变「失败 → 渲染进程」的时间窗与重入形态。
 
 ## 4. 渲染进程复现尝试（Chrome）与结果
 
