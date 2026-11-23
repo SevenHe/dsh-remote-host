@@ -1,0 +1,439 @@
+diff --git a/packages/api/session-controller/src/index.ts b/packages/api/session-controller/src/index.ts
+index 6303340c..0b76e10d 100644
+--- a/packages/api/session-controller/src/index.ts
++++ b/packages/api/session-controller/src/index.ts
+@@ -338,10 +338,19 @@ export class SessionController extends TypertRemoteService {
+ 
+   /**
+    * Describe every currently routable model for Host-generation selectors.
++   *
++   * A Session id may be supplied by the caller. This Host always answers with its own
++   * catalog — the argument exists so a carrier that fronts several Hosts can route the read
++   * to the Host that owns that Session, instead of answering from the wrong one and leaving
++   * the selector with model ids that Host cannot run. Callers that need this Host's catalog
++   * without a Session (the pre-restore warm-up) keep omitting it.
++   * @param sessionId - the Session whose selector is reading; omitted for a Host-wide read.
+    * @returns provider-grouped models, the deployment default, and isolated provider failures.
+    */
+   @Remote('modelCatalog')
+-  modelCatalog(): Promise<ModelCatalog> {
++  modelCatalog(sessionId?: SessionId): Promise<ModelCatalog> {
++    // Deliberately unused here: ownership is decided by the carrier, not by this Host.
++    void sessionId
+     return buildModelCatalog(this.ctx)
+   }
+ 
+diff --git a/packages/client/ui-model-selection/src/client/catalog.ts b/packages/client/ui-model-selection/src/client/catalog.ts
+index cbc92642..9a6d9a6c 100644
+--- a/packages/client/ui-model-selection/src/client/catalog.ts
++++ b/packages/client/ui-model-selection/src/client/catalog.ts
+@@ -1,24 +1,68 @@
+-/** One Host-generation model catalog shared by every Session selector. */
++/** One Host-generation model catalog per serving Host, shared by that Host's Session selectors. */
+ 
+ import type { Context as ClientContext } from '@deepseek-ai/cordis'
+-import type { ModelCatalog, ModelSelection, ModelProviderGroup } from '@deepseek-ai/dsh-api-remotes/client'
++import type { ModelCatalog, ModelSelection, ModelProviderGroup, SessionId } from '@deepseek-ai/dsh-api-remotes/client'
+ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
+ 
+-/** Observable lifecycle of the shared model catalog. */
++/** Observable lifecycle of one owner's model catalog. */
+ export interface ModelCatalogState {
+   value: ModelCatalog | null
+   status: 'idle' | 'loading' | 'ready' | 'error'
+   error: string | null
+ }
+ 
+-/** Loads at most one model catalog for the current Host generation. */
++/**
++ * One owner's catalog: its value, lifecycle and in-flight load.
++ *
++ * An owner is a Session, not the page. A carrier that fronts several Hosts (a remote
++ * Session mounted into this one) serves a different catalog per Host, so a single
++ * page-lifetime value cannot answer for both: the wrong one leaves a selector showing
++ * model ids that Host cannot run.
++ */
++interface OwnerEntry {
++  /** Observable catalog for this owner. */
++  readonly store: SnapshotStore<ModelCatalogState>
++  /** Shared in-flight load, so concurrent readers of one owner issue one request. */
++  inflight: Promise<ModelCatalog> | undefined
++  /** Bumped by every invalidation; a late response from an older generation is dropped. */
++  generation: number
++  /**
++   * Whether this owner's Host accepted the optional Session argument.
++   *
++   * A Host that predates it REJECTS the read (gateway/arguments-invalid) instead of ignoring
++   * the extra field, so a new client against an older Host would leave the selector in an
++   * error state and break the composer. The first rejection is remembered here and the owner
++   * falls back to the Session-less read for the rest of its life.
++   */
++  supportsSessionArg: boolean
++}
++
++/** Creates one idle entry for an owner that has not loaded yet. */
++function createEntry(): OwnerEntry {
++  return {
++    store: createSnapshotStore<ModelCatalogState>({ value: null, status: 'idle', error: null }),
++    inflight: undefined,
++    generation: 0,
++    supportsSessionArg: true,
++  }
++}
++
++/**
++ * Loads one model catalog per owner (Session), on demand.
++ *
++ * The catalog is requested with the owning Session id so a multi-Host carrier can route the
++ * read to the Host that owns that Session; this Host answers with its own catalog either
++ * way. Entries are cached per Session, so switching to another Session loads that Session's
++ * owner and switching back reuses the loaded value.
++ */
+ export class ModelCatalogDirectory {
+-  /** Current shared catalog value and load lifecycle. */
+-  readonly store: SnapshotStore<ModelCatalogState> = createSnapshotStore({
+-    value: null,
+-    status: 'idle',
+-    error: null,
+-  })
++  /** Host-wide owner: the catalog for callers that name no Session. */
++  private readonly shared: OwnerEntry = createEntry()
++
++  /** Catalog for callers that name no Session (Host-wide warm-up and selectors). */
++  readonly store: SnapshotStore<ModelCatalogState> = this.shared.store
++
++  private readonly owners = new Map<string, OwnerEntry>()
+ 
+   private readonly reasoning = new Map<string, ModelProviderGroup['models'][number]['reasoning']>()
+ 
+@@ -31,77 +75,149 @@ export class ModelCatalogDirectory {
+     return this.reasoning.get(JSON.stringify([selection.provider, selection.model]))
+   }
+ 
+-  private generation = 0
+-  private inflight: Promise<ModelCatalog> | undefined
+-
+   /**
+-   * @param ctx - the providing plugin's context, whose `remote.session`
+-   * namespace carries the Host-generation catalog.
++   * @param ctx - the providing plugin's context, whose remote.session namespace carries the
++   * Host-generation catalog.
+    */
+   constructor(private readonly ctx: ClientContext) {}
+ 
+   /**
+-   * Return the current generation's catalog, sharing its one in-flight load.
+-   * @returns the loaded global catalog.
++   * The catalog store of one owner.
++   * @param sessionId - the owning Session, or undefined for the Host-wide catalog.
++   * @returns that owner's observable catalog.
+    */
+-  load(): Promise<ModelCatalog> {
+-    const state = this.store.getSnapshot()
++  storeFor(sessionId?: SessionId): SnapshotStore<ModelCatalogState> {
++    return this.entryFor(sessionId).store
++  }
++
++  /**
++   * Return one owner's catalog, sharing that owner's in-flight load.
++   * @param sessionId - the owning Session, or undefined for the Host-wide catalog.
++   * @returns the loaded catalog for that owner.
++   */
++  load(sessionId?: SessionId): Promise<ModelCatalog> {
++    const entry = this.entryFor(sessionId)
++    const state = entry.store.getSnapshot()
+     if (state.status === 'ready' && state.value !== null) return Promise.resolve(state.value)
+-    if (this.inflight !== undefined) return this.inflight
+-    const generation = this.generation
+-    this.store.update((draft) => {
++    if (entry.inflight !== undefined) return entry.inflight
++    const generation = entry.generation
++    entry.store.update((draft) => {
+       draft.status = 'loading'
+       draft.error = null
+     })
+-    const operation = this.ctx.remote.session.modelCatalog().then((response) => {
++    // The Session id travels with the request so a carrier fronting several Hosts routes it
++    // to the owner; a caller without a Session keeps the Session-less shape it always had.
++    // A single Remote parameter is passed positionally by the generated client.
++    const issue = (arg?: SessionId) => arg === undefined
++      ? this.ctx.remote.session.modelCatalog()
++      : this.ctx.remote.session.modelCatalog(arg)
++    // The capability probe lives INSIDE this handler, so a Host that accepts the argument
++    // pays exactly the same number of promise turns as before; only the degrading path
++    // re-issues the read.
++    // An arrow keeps this instance bound (a named function expression would lose it).
++    const consume = (response: Awaited<ReturnType<typeof issue>>): ModelCatalog | Promise<ModelCatalog> => {
+       if (!response.ok) {
+-        throw new Error(`${response.error.code}: ${response.error.message}`)
++        if (sessionId !== undefined && entry.supportsSessionArg === true
++          && response.error.code === 'gateway/arguments-invalid'
++          && response.error.message.indexOf('sessionId') !== -1) {
++          // Older Host: remember it and answer from the Session-less read instead of failing.
++          entry.supportsSessionArg = false
++          return issue().then(consume)
++        }
++        throw new Error(response.error.code + ': ' + response.error.message)
+       }
+-      if (generation === this.generation) {
++      if (generation === entry.generation) {
+         for (const group of response.value.groups) {
+           for (const model of group.models) {
+             this.reasoning.set(JSON.stringify([group.id, model.id]), model.reasoning)
+           }
+         }
+-        this.store.set({ value: response.value, status: 'ready', error: null })
++        entry.store.set({ value: response.value, status: 'ready', error: null })
+       }
+       return response.value
+-    }).catch((error: unknown) => {
+-      if (generation === this.generation) {
+-        this.store.update((draft) => {
+-          draft.status = 'error'
+-          draft.error = error instanceof Error ? error.message : String(error)
+-        })
+-      }
+-      throw error
+-    }).finally(() => {
+-      if (generation === this.generation && this.inflight === operation) this.inflight = undefined
+-    })
+-    this.inflight = operation
++    }
++    const operation = (sessionId === undefined || entry.supportsSessionArg !== true ? issue() : issue(sessionId))
++      .then(consume).catch((error: unknown) => {
++        if (generation === entry.generation) {
++          entry.store.update((draft) => {
++            draft.status = 'error'
++            draft.error = error instanceof Error ? error.message : String(error)
++          })
++        }
++        throw error
++      }).finally(() => {
++        if (generation === entry.generation && entry.inflight === operation) entry.inflight = undefined
++      })
++    entry.inflight = operation
+     return operation
+   }
+ 
+   /**
+-   * Invalidate the loaded catalog; the next explicit menu read reloads it.
++   * Invalidate one owner; the next explicit menu read reloads it.
++   * @param entry - the owner to invalidate.
+    * @param clear - whether values from the previous Host generation must be hidden.
+    */
+-  private invalidate(clear = false): void {
+-    this.generation += 1
+-    this.inflight = undefined
+-    const value = clear ? null : this.store.getSnapshot().value
+-    this.store.set({ value, status: 'idle', error: null })
++  private invalidate(entry: OwnerEntry, clear = false): void {
++    entry.generation += 1
++    entry.inflight = undefined
++    const value = clear ? null : entry.store.getSnapshot().value
++    entry.store.set({ value, status: 'idle', error: null })
++  }
++
++  /** Every live owner, Host-wide entry included. */
++  private allEntries(): OwnerEntry[] {
++    return [this.shared, ...this.owners.values()]
++  }
++
++  /** One owner's entry, created on first use. */
++  private entryFor(sessionId?: SessionId): OwnerEntry {
++    if (sessionId === undefined) return this.shared
++    const key = String(sessionId)
++    const existing = this.owners.get(key)
++    if (existing !== undefined) return existing
++    const created = createEntry()
++    this.owners.set(key, created)
++    return created
+   }
+ 
+-  /** Invalidate and reload the catalog after a Host-side model input changes. */
++  /**
++   * Invalidate every owner and reload the ones already in use.
++   *
++   * A Host-side model input change (adapters, credentials, settings) applies to the Host
++   * that serves the Session, so reloading only one owner would leave the others stale.
++   */
+   refresh(): void {
+-    this.invalidate()
+-    void this.load().catch(() => { /* the selector exposes the shared error */ })
++    const reloaded = this.allEntries().filter(entry => entry.store.getSnapshot().status !== 'idle')
++    for (const entry of this.allEntries()) this.invalidate(entry)
++    for (const entry of reloaded) void this.reload(entry)
+   }
+ 
+-  /** Clear Host-specific values and load the replacement Host generation. */
++  /** Clear Host-specific values and reload every owner for the replacement Host generation. */
+   resetGeneration(): void {
+     this.reasoning.clear()
+-    this.invalidate(true)
+-    void this.load().catch(() => { /* the selector exposes the shared error */ })
++    const reloaded = this.allEntries().filter(entry => entry.store.getSnapshot().status !== 'idle')
++    for (const entry of this.allEntries()) this.invalidate(entry, true)
++    for (const entry of reloaded) void this.reload(entry)
++  }
++
++  /**
++   * Reload one invalidated entry through the Session that owns it.
++   * @param entry - the owner to reload.
++   */
++  private async reload(entry: OwnerEntry): Promise<void> {
++    try {
++      await this.load(this.sessionOf(entry))
++    } catch {
++      // The selector surface presents the shared error.
++    }
++  }
++
++  /** The Session id that owns an entry (undefined for the Host-wide entry). */
++  private sessionOf(entry: OwnerEntry): SessionId | undefined {
++    if (entry === this.shared) return undefined
++    for (const [key, candidate] of this.owners) {
++      if (candidate === entry) return key as SessionId
++    }
++    return undefined
+   }
+ }
+diff --git a/packages/client/ui-model-selection/src/client/directory.ts b/packages/client/ui-model-selection/src/client/directory.ts
+index 67136d39..f8062089 100644
+--- a/packages/client/ui-model-selection/src/client/directory.ts
++++ b/packages/client/ui-model-selection/src/client/directory.ts
+@@ -66,9 +66,12 @@ export class ModelDirectory {
+     private readonly isBlank: () => boolean,
+     private readonly track?: TrackProductEvent,
+   ) {
+-    this.unsubscribeCatalog = catalog.store.subscribe(() => { this.syncInputs() })
++    this.unsubscribeCatalog = catalog.storeFor(sessionId).subscribe(() => { this.syncInputs() })
+     this.unsubscribeSelection = projected.subscribe(() => { this.syncInputs() })
+-    this.syncInputs()
++    // A Session's directory exists because its composer is mounted, and mounting is what asks
++    // for that Host's catalog. Loading here gives each Session its own Host's catalog instead
++    // of inheriting whichever Host happened to load last.
++    void this.load().catch(() => { /* the store carries the error for both entries */ })
+   }
+ 
+   /**
+@@ -77,7 +80,7 @@ export class ModelDirectory {
+    */
+   async load(): Promise<ModelDirectoryState> {
+     this.assertAvailable()
+-    await this.catalog.load()
++    await this.catalog.load(this.sessionId)
+     this.syncInputs()
+     return this.store.getSnapshot()
+   }
+@@ -157,7 +160,7 @@ export class ModelDirectory {
+ 
+   private syncInputs(): void {
+     if (this.disposed) return
+-    const catalog = this.catalog.store.getSnapshot()
++    const catalog = this.catalog.storeFor(this.sessionId).getSnapshot()
+     const projected = modelSelectionProjection(this.projected.getSnapshot())
+     const intended = projected?.next ?? catalog.value?.default
+     const reasoning = intended === undefined ? undefined : this.catalog.reasoningFor(intended)
+diff --git a/packages/client/ui-model-selection/tests/catalog.client.spec.ts b/packages/client/ui-model-selection/tests/catalog.client.spec.ts
+index f800266d..bb7c3979 100644
+--- a/packages/client/ui-model-selection/tests/catalog.client.spec.ts
++++ b/packages/client/ui-model-selection/tests/catalog.client.spec.ts
+@@ -93,3 +93,99 @@ describe('ModelCatalogDirectory', () => {
+     })
+   })
+ })
++describe('ModelCatalogDirectory per-Session ownership', () => {
++  const sessionA = 'session-a' as never
++  const sessionB = 'session-b' as never
++
++  it('keeps the Session-less request shape when no Session is named', async () => {
++    const models = vi.fn().mockResolvedValue({ ok: true, value: catalog('host') })
++    const subject = directory(models)
++    await subject.load()
++    expect(models).toHaveBeenCalledWith()
++  })
++
++  it('sends the owning Session id so a multi-Host carrier can route the read', async () => {
++    const models = vi.fn().mockResolvedValue({ ok: true, value: catalog('remote-host-model') })
++    const subject = directory(models)
++    await subject.load(sessionA)
++    expect(models).toHaveBeenCalledWith(sessionA)
++    expect(subject.storeFor(sessionA).getSnapshot()).toMatchObject({ status: 'ready' })
++  })
++
++  it('loads each Session once and reuses it when switching back', async () => {
++    const models = vi.fn()
++      .mockResolvedValueOnce({ ok: true, value: catalog('local-model') })
++      .mockResolvedValueOnce({ ok: true, value: catalog('remote-model') })
++    const subject = directory(models)
++    await subject.load(sessionA)
++    await subject.load(sessionB)
++    expect(models).toHaveBeenCalledTimes(2)
++    expect(subject.storeFor(sessionA).getSnapshot().value).toEqual(catalog('local-model'))
++    expect(subject.storeFor(sessionB).getSnapshot().value).toEqual(catalog('remote-model'))
++    await subject.load(sessionA)
++    expect(models).toHaveBeenCalledTimes(2)
++  })
++
++  it('keeps the Host-wide catalog separate from a Session catalog', async () => {
++    const models = vi.fn()
++      .mockResolvedValueOnce({ ok: true, value: catalog('warm-up') })
++      .mockResolvedValueOnce({ ok: true, value: catalog('session-host') })
++    const subject = directory(models)
++    await subject.load()
++    await subject.load(sessionA)
++    expect(models).toHaveBeenNthCalledWith(1)
++    expect(models).toHaveBeenNthCalledWith(2, sessionA)
++    expect(subject.store.getSnapshot().value).toEqual(catalog('warm-up'))
++    expect(subject.storeFor(sessionA).getSnapshot().value).toEqual(catalog('session-host'))
++  })
++
++  it('invalidates every owner, not only the Host-wide one', async () => {
++    const models = vi.fn().mockResolvedValue({ ok: true, value: catalog('v1') })
++    const subject = directory(models)
++    await subject.load()
++    await subject.load(sessionA)
++    expect(models).toHaveBeenCalledTimes(2)
++    subject.resetGeneration()
++    await subject.load()
++    await subject.load(sessionA)
++    expect(models).toHaveBeenCalledTimes(4)
++  })
++
++  it('degrades an owner to the Session-less read when the Host predates the argument', async () => {
++    const models = vi.fn()
++      .mockResolvedValueOnce({
++        ok: false,
++        error: new RemoteError('gateway/arguments-invalid', 'typert gateway: session/modelCatalog: args fields do not match the descriptor: unexpected "sessionId"', { endpoint: 'session/modelCatalog' }),
++      })
++      .mockResolvedValueOnce({ ok: true, value: catalog('older-host') })
++    const subject = directory(models)
++    await expect(subject.load(sessionA)).resolves.toEqual(catalog('older-host'))
++    expect(models).toHaveBeenNthCalledWith(1, sessionA)
++    expect(models).toHaveBeenNthCalledWith(2)
++    expect(subject.storeFor(sessionA).getSnapshot()).toMatchObject({ status: 'ready', error: null })
++  })
++
++  it('remembers the degraded owner, so later reads stay Session-less', async () => {
++    const models = vi.fn()
++      .mockResolvedValueOnce({
++        ok: false,
++        error: new RemoteError('gateway/arguments-invalid', 'unexpected "sessionId"', { endpoint: 'session/modelCatalog' }),
++      })
++      .mockResolvedValue({ ok: true, value: catalog('older-host') })
++    const subject = directory(models)
++    await subject.load(sessionA)
++    subject.refresh()
++    await vi.waitFor(() => { expect(models).toHaveBeenCalledTimes(3) })
++    expect(models).toHaveBeenNthCalledWith(3)
++    expect(subject.storeFor(sessionA).getSnapshot()).toMatchObject({ status: 'ready' })
++  })
++
++  it('does not degrade an owner whose Host accepts the argument', async () => {
++    const models = vi.fn().mockResolvedValue({ ok: true, value: catalog('modern-host') })
++    const subject = directory(models)
++    await subject.load(sessionA)
++    await subject.load(sessionA)
++    expect(models).toHaveBeenCalledTimes(1)
++    expect(models).toHaveBeenNthCalledWith(1, sessionA)
++  })
++})
