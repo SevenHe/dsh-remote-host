@@ -4,7 +4,7 @@ import { createPage } from './helpers/page.mjs'
 
 const NOW = Date.now()
 const LOCAL = [{ sessionId: 'local-1', updatedAt: NOW, running: false }]
-const REMOTE = [{ sessionId: 'worker-1', updatedAt: NOW, running: false, blank: true, cwd: '/home/x/proj' }]
+const REMOTE = [{ sessionId: 'worker-1', updatedAt: NOW, running: false, blank: true, cwd: '/home/user/proj' }]
 
 test('publishRemoteSessions: a blank remote row keeps blank, running and cwd', async () => {
   const page = createPage({ config: { group: 'none' }, localItems: LOCAL, remoteItems: REMOTE })
@@ -18,5 +18,5 @@ test('publishRemoteSessions: a blank remote row keeps blank, running and cwd', a
   assert.ok(row, 'the remote row is published')
   assert.equal(row.blank, true, 'a blank remote Session must stay blank after injection')
   assert.equal(row.running, false)
-  assert.equal(row.cwd, '/home/x/proj')
+  assert.equal(row.cwd, '/home/user/proj')
 })

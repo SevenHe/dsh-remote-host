@@ -50,3 +50,9 @@ against real hosts. A quick loop that catches most regressions:
   address; examples use `devbox.example.com:3080` and `/home/user`.
 * **A published index entry is immutable.** New builds get a new commit and a new
   `versions[]` entry; never rewrite an entry someone may already have installed.
+
+## 提交前必做（硬性）
+
+1. 必须跑 `npm run check` 并保持全绿；它包含 `scripts/verify-sensitive.mjs`，任何内网地址、内部产品名、真实用户名、凭据都会让它失败；
+2. **文档/示例/测试夹具里禁止**出现真实内网地址、内部产品名、真实个人目录与真实邮箱，一律使用 `docs/sensitive-data.md` 里的占位符（`devbox.example.com:3080`、`/home/<user>`、`/Users/me`、`example.com`）；
+3. 从内部系统复制内容前先抽象：不要直接粘贴工单标题、字段值或业务数据。

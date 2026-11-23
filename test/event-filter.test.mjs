@@ -71,7 +71,7 @@ test('events none: a remote waterfall is forwarded unless the local host owns th
 
 test('events none: the remote ready frame is consumed, not forwarded', async () => {
   const { page, item } = await openEvents('none')
-  item('remote', { type: 'ready', clientId: 'remote-client-1', host: { home: '/home' } })
+  item('remote', { type: 'ready', clientId: 'remote-client-1', host: { home: '/home/user' } })
   assert.deepEqual(received(page), [])
 })
 
