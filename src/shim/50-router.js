@@ -162,7 +162,14 @@
 
     function connect(kind) {
       var existing = upstreams.get(kind)
-      if (existing !== undefined) return existing
+      if (existing !== undefined) {
+        // Only a socket that is still connecting or open may be reused. A CLOSING/CLOSED one
+        // would take the recovery listeners and never fire them, which is how a short flap left
+        // the page half-recovered until it trapped (see docs/crash-path-b.md).
+        if (existing.readyState === 0 || existing.readyState === 1) return existing
+        upstreams.delete(kind)
+        traceEvent('leg-dropped-stale', { kind: kind, readyState: existing.readyState })
+      }
       var target = kind === 'local' ? localPath : mountSocketUrl(localPath)
       if (target === undefined) {
         note('leg-no-url', { kind: kind, from: localPath })
@@ -565,6 +572,12 @@
         var socket
         try { socket = connect('remote') } catch (error) { socket = undefined }
         reconnectPending = false
+        // A socket that is not connecting/open cannot recover: treat it as a failure instead of
+        // attaching an open listener that can never fire.
+        if (socket !== undefined && socket.readyState !== 0 && socket.readyState !== 1) {
+          traceEvent('stale-socket', { readyState: socket.readyState })
+          socket = undefined
+        }
         if (socket === undefined) {
           // No carrier: yield, then schedule the next step through the timer.
           reconnectDepth += 1

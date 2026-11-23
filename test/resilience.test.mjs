@@ -166,3 +166,25 @@ test('degrade: a healthy connection never degrades', async () => {
   page.fireTimers()
   assert.equal(client.readyState, 1, 'a healthy mount stays connected')
 })
+
+/**
+ * A short flap used to leave the page half-recovered because the reconnect reused the socket the
+ * leg had just closed: connect() returned the cached object without looking at readyState, so the
+ * recovery listeners were attached to a dead socket and never fired.
+ */
+for (const state of [3, 2]) {
+  const label = state === 3 ? 'CLOSED' : 'CLOSING'
+  test('reconnect: a ' + label + ' cached leg socket is replaced, never reused', async () => {
+    const page = createPage({ config: { group: 'none' }, remoteItems: REMOTE_ITEMS, remoteReadyState: 0 })
+    await page.settle()
+    const client = page.openMux()
+    client.send(JSON.stringify({ type: 'open', streamId: 'e1', endpoint: '$events', payload: { args: {} } }))
+    const first = page.sockets.get('remote')
+    assert.ok(first, 'the remote leg is opened')
+    first.readyState = state
+    first.emit('close', { code: 1006 })
+    page.fireTimers()
+    const second = page.sockets.get('remote')
+    assert.notEqual(second, first, 'a ' + label + ' socket must not be reused for the reconnect')
+  })
+}
