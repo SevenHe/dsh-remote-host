@@ -42,6 +42,8 @@
     'remote-open': true, 'open-handled': true, 'replay-enter': true, 'replay-send': true,
     'replay-done': true, 'status-open-enter': true, 'status-open-exit': true,
     'reconnect-enter': true, 'attempt-run': true, 'attempt-early-return': true,
+    'connect-return': true, 'attempt-socket': true, 'listener-attach': true, 'leg-dropped-stale': true,
+    'attempt-abandoned': true,
     'reconnect-begin': true, 'reconnect-end': true,
     'reconnect-nocarrier': true, 'replay-begin': true, 'replay-end': true,
     'stream-open': true, 'service-register': true, 'crash-marker': true,

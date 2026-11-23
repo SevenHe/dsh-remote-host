@@ -142,6 +142,8 @@
     var reconnectPending = false
     /** Synchronous re-entry depth of reconnectRemote (should stay 1). */
     var reconnectDepth = 0
+    /** Monotonic id per leg socket, so listener-vs-socket identity is visible in the trace. */
+    var socketSeq = 0
     var merges = new Map()
     var counter = 0
     /** Frames seen per upstream leg, for the diagnostics report. */
@@ -166,9 +168,13 @@
         // Only a socket that is still connecting or open may be reused. A CLOSING/CLOSED one
         // would take the recovery listeners and never fire them, which is how a short flap left
         // the page half-recovered until it trapped (see docs/crash-path-b.md).
-        if (existing.readyState === 0 || existing.readyState === 1) return existing
+        if (existing.readyState === 0 || existing.readyState === 1) {
+          if (existing.__drhSocketId === undefined) existing.__drhSocketId = (socketSeq += 1)
+          traceEvent('connect-return', { kind: kind, socketId: existing.__drhSocketId, readyState: existing.readyState, reused: true })
+          return existing
+        }
         upstreams.delete(kind)
-        traceEvent('leg-dropped-stale', { kind: kind, readyState: existing.readyState })
+        traceEvent('leg-dropped-stale', { kind: kind, socketId: existing.__drhSocketId, readyState: existing.readyState })
       }
       var target = kind === 'local' ? localPath : mountSocketUrl(localPath)
       if (target === undefined) {
@@ -186,6 +192,8 @@
         note('leg-no-socket', { kind: kind, url: target })
         return undefined
       }
+      socket.__drhSocketId = (socketSeq += 1)
+      traceEvent('connect-return', { kind: kind, socketId: socket.__drhSocketId, readyState: socket.readyState, reused: false })
       note('leg-open-requested', { kind: kind, url: target })
       publishStatus(kind, 'connecting')
       // A shell-provided socket may implement only addEventListener; assigning
@@ -595,9 +603,22 @@
           attemptTimer = setTimeout(function () {
             attemptTimer = undefined
             if (socket !== undefined && socket.readyState === 1) return
+            // The socket never opened and never errored: it is stuck in CONNECTING (the browser
+            // keeps it there when the link came back mid-handshake). Recording a failure is not
+            // enough - the socket has to be abandoned and the attempt repeated, or the page stays
+            // half-recovered until it traps (breadcrumbs: listener attached at readyState 0, then
+            // no open, no error, ~15s to death).
+            traceEvent('attempt-abandoned', {
+              socketId: socket === undefined ? -1 : socket.__drhSocketId,
+              readyState: socket === undefined ? -1 : socket.readyState,
+            })
+            try { if (socket !== undefined) socket.close() } catch (error) { /* best effort */ }
+            try { if (socket !== undefined && upstreams.get('remote') === socket) upstreams.delete('remote') } catch (error) { /* best effort */ }
             noteRemoteUnavailable('attempt-timeout')
+            if (degraded !== true) reconnectRemote()
           }, ATTEMPT_TIMEOUT_MS)
         }
+        traceEvent('attempt-socket', { socketId: socket.__drhSocketId, readyState: socket.readyState, attempt: reconnectAttempts })
         var onOpen = function () {
           reconnectAttempts = 0
           if (attemptTimer !== undefined) {
@@ -618,8 +639,13 @@
           if (typeof setTimeout === 'function') setTimeout(resume, 0)
           else resume()
         }
-        if (socket.readyState === 1) onOpen()
-        else if (typeof socket.addEventListener === 'function') socket.addEventListener('open', onOpen)
+        if (socket.readyState === 1) {
+          traceEvent('listener-attach', { socketId: socket.__drhSocketId, readyState: 1, mode: 'immediate' })
+          onOpen()
+        } else if (typeof socket.addEventListener === 'function') {
+          traceEvent('listener-attach', { socketId: socket.__drhSocketId, readyState: socket.readyState, mode: 'listener' })
+          socket.addEventListener('open', onOpen)
+        }
       }
       if (typeof setTimeout === 'function') reconnectTimer = setTimeout(attempt, reconnectBackoff(reconnectAttempts))
       else attempt()
