@@ -57,6 +57,18 @@
       },
       "versions": [
         {
+          "version": "1.14.4",
+          "publishTimestamp": 1795404003,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/SevenHe/dsh-remote-host",
+            "commit": "aa1a112ecefda116e8b74f90061cfbc1e7d33049"
+          },
+          "engines": {
+            "dsh": "^0.2.2-rc.3"
+          }
+        },
+        {
           "version": "1.14.3",
           "publishTimestamp": 1795169529,
           "source": {
