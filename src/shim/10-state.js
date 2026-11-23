@@ -38,6 +38,65 @@
     } catch (error) { return undefined }
   }
 
+  /** Synthetic claim Workspace: published only in the merged client view, owned by no host. */
+  var CLAIM_WORKSPACE_ID = REMOTE_WORKSPACE_PREFIX + 'claim'
+
+  /** The create request inside a client-request payload, when it is a create. */
+  function createRequest(payload) {
+    var args = payload !== null && typeof payload === 'object' ? payload.args : undefined
+    var request = args !== null && typeof args === 'object' ? args.request : undefined
+    return request !== null && typeof request === 'object' ? request : undefined
+  }
+
+  /**
+   * Which Host owns a session/create.
+   *
+   * A create is workspace-scoped, so it must be decided by its workspaceId. Deciding it
+   * from "does the payload mention a remote id" routed a boot-time restore create to the
+   * mount whenever the payload carried the remote Session id it was restoring, or the
+   * synthetic claim workspace, and the mount answered workspace/not-found on every start.
+   * Only a workspace the remote host actually owns belongs to the mount.
+   * @returns 'remote' or 'local'.
+   */
+  function createTarget(payload) {
+    var request = createRequest(payload)
+    var workspaceId = request === undefined ? undefined : request.workspaceId
+    if (typeof workspaceId !== 'string') return 'local'
+    if (workspaceId.indexOf(REMOTE_WORKSPACE_PREFIX) !== 0) return 'local'
+    var raw = workspaceId.slice(REMOTE_WORKSPACE_PREFIX.length)
+    return remoteWorkspaceIds.has(raw) ? 'remote' : 'local'
+  }
+
+  /**
+   * Copy a create payload without its workspaceId.
+   *
+   * The rpc carrier hands the payload object directly, so the claim rewrite has to build a
+   * new object instead of editing a JSON body (dropWorkspaceId does that for the fetch
+   * carrier). Only the request/args/payload objects are copied; the caller's payload is
+   * never mutated, because a carrier may reuse it.
+   * @returns the rewritten payload, or undefined when this is not a claim create.
+   */
+  function withoutWorkspaceId(payload) {
+    var request = createRequest(payload)
+    if (request === undefined || request.workspaceId !== CLAIM_WORKSPACE_ID) return undefined
+    var nextRequest = {}
+    for (var key in request) { if (Object.prototype.hasOwnProperty.call(request, key) && key !== 'workspaceId') nextRequest[key] = request[key] }
+    var args = payload.args
+    var nextArgs = {}
+    for (var argKey in args) { if (Object.prototype.hasOwnProperty.call(args, argKey)) nextArgs[argKey] = args[argKey] }
+    nextArgs.request = nextRequest
+    var nextPayload = {}
+    for (var field in payload) { if (Object.prototype.hasOwnProperty.call(payload, field)) nextPayload[field] = payload[field] }
+    nextPayload.args = nextArgs
+    return nextPayload
+  }
+
+  /** Whether a create names the synthetic claim Workspace, which no Host can resolve. */
+  function isClaimCreate(payload) {
+    var request = createRequest(payload)
+    return request !== undefined && request.workspaceId === CLAIM_WORKSPACE_ID
+  }
+
   function refersRemote(value) {
     if (remoteSessions.size === 0) return false
     var text

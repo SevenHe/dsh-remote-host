@@ -23,6 +23,64 @@
   }
 
   /**
+   * Rebuild a session/create init without its workspaceId.
+   *
+   * Only used for the synthetic claim Workspace: the create it carries can only be
+   * answered by a Host, and no Host owns that id, so the id is dropped and the local Host
+   * supplies a plain Session. Anything unexpected leaves the request untouched.
+   */
+  function dropWorkspaceId(init) {
+    try {
+      if (init === undefined || init === null || typeof init.body !== 'string') return undefined
+      var parsed = JSON.parse(init.body)
+      var request = createRequest(parsed.payload)
+      if (request === undefined || request.workspaceId !== CLAIM_WORKSPACE_ID) return undefined
+      var copy = {}
+      for (var key in request) { if (Object.prototype.hasOwnProperty.call(request, key) && key !== 'workspaceId') copy[key] = request[key] }
+      parsed.payload.args.request = copy
+      var forwarded = {}
+      for (var field in init) { if (Object.prototype.hasOwnProperty.call(init, field)) forwarded[field] = init[field] }
+      forwarded.body = JSON.stringify(parsed)
+      return forwarded
+    } catch (error) {
+      return undefined
+    }
+  }
+
+  /**
+   * Router scope audit (2026-11-23).
+   *
+   * refersRemote() decides by "does the payload text contain a known remote id", which is
+   * only correct when that id is the call's SUBJECT. The cases below are the ones whose
+   * scope is an explicit field, so a substring hit is an accident rather than an identity:
+   *
+   *   session/create        workspace-scoped  -> now decided by createTarget() (fixed here)
+   *   workspace/{rename,delete,insertBefore,insertSessionBefore}
+   *                         workspace-scoped  -> still substring. Works today only because a
+   *                         remote workspace is published as drh:<raw> and <raw> is in
+   *                         remoteWorkspaceIds, so the text contains the raw id; a local
+   *                         workspace id cannot contain it. Same shape of fragility as the
+   *                         create bug: prefer workspaceId here next.
+   *   directoryPicker/*     path-scoped       -> no ids in the payload, never routed.
+   *   session/{follow,events,state,page,projections,prompt,cancel,rename,fork,updateQueue,
+   *   wait,attachment,selectModel}
+   *                         session-scoped    -> correct by substring: the id named IS the
+   *                         subject, including the address.sessionId form.
+   *   session/list, $events, $events/result
+   *                         special-cased     -> merge / forwarded-event rewrite, not this rule.
+   *   settings/*, pluginManager/*, pluginInventory/*, agentPresets/list,
+   *   permissionPresets/catalog, skills/list, schedule/*, speech/*, messageFeedback/*,
+   *   workspaceFiles/*
+   *                         host-global       -> no session/workspace subject, so they can
+   *                         only be misrouted by an id appearing inside a path or title.
+   *                         Left as-is; a workspaceFiles path containing a session id is the
+   *                         realistic case to tighten later.
+   *
+   * Only session/create is changed in this commit; the rest is registered so the next pass
+   * can move them to explicit-field decisions without rediscovering the list.
+   */
+
+  /**
    * Whether this call is rerouted away from the local Host. Only a reroute may
    * fall back to a second, local attempt: a pass-through request that fails has
    * already reached the Host once, and retrying it would duplicate POSTs.
@@ -33,6 +91,13 @@
       if (request === undefined) return false
       if (request.method === 'session/list') return true
       if (request.method === EVENT_RESULT_ENDPOINT) return true
+      // A create is workspace-scoped: never let a mention of a remote Session id in the
+      // payload send it to the mount (that is what made boot restore fail every start).
+      // The claim Workspace still needs the rewrite below, so it is handled here too
+      // rather than being passed straight to the local Host.
+      if (request.method === 'session/create') {
+        return createTarget(request.payload) === 'remote' || isClaimCreate(request.payload) === true
+      }
       // Mount-scoped configuration: the model catalogue lists what THIS host can run,
       // and its request carries no session id, so it must follow the focused Session.
       if (modelScopedMethod(request.method)) return remoteFocused()
@@ -108,6 +173,19 @@
       var rewritten = rewriteEventResult(init)
       if (rewritten !== undefined) return localFetch(mountUrl(input), rewritten)
       return localFetch(input, init)
+    }
+    if (method === 'session/create') {
+      if (createTarget(request.payload) === 'remote') {
+        note('route-remote', { method: method })
+        return localFetch(mountUrl(input), init)
+      }
+      // The claim Workspace exists only in the merged client view, so neither Host can
+      // resolve it. Restore asks for a Session there on the first load after such a
+      // selection; drop the workspace and let the local Host answer, instead of failing
+      // the whole restoration with workspace/not-found.
+      var claimless = isClaimCreate(request.payload) === true ? dropWorkspaceId(init) : undefined
+      if (claimless !== undefined) note('claim-create-local', { method: method })
+      return localFetch(input, claimless === undefined ? init : claimless)
     }
     // Two ways to belong to the mounted host: the payload names one of its Sessions,
     // or the method is per-host configuration and that host owns the focused Session.

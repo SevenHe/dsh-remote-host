@@ -284,3 +284,113 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 - 切回本地会话高亮清除：点可见的本地区会话行后，块内 `selected` 行数 `1 → 0`，composer 保持可用（`contenteditable=true`，无「会话不可用」）。
 
 **注意（lab 配方坑）**：profile 的 `node_modules` 若整体软链到 `~/.dsh/profiles/desktop/node_modules`，其中 `dsh-remote-host` 指向主 checkout，改 profile `package.json` 的 `link:` 依赖不生效。必须逐项软链后单独把 `dsh-remote-host` 指向 worktree，并用 `readlink -f <profile>/node_modules/dsh-remote-host/lib/client.js` 确认，否则测的是旧代码。
+
+<a id="patch-probe"></a>
+
+## B-30 / B-31 怎么跑：行级补丁探针 `scripts/patch-probe.mjs`
+
+B-30（状态变化只补丁、不重建）与 B-31（排序变化才重建）由 `scripts/patch-probe.mjs` 自动判定，无需真远端：探针锁定 `__DSH_REMOTE_HOST_STATE__` / `__DSH_REMOTE_HOST_SESSIONS__` / `__DSH_REMOTE_HOST_MARKS__` 三个全局，再 dispatch `drh:state`/`drh:sessions`/`drh:marks`，走的仍是生产链路（globals → 事件 → 重绘）。
+
+```bash
+# 1) lab：profile 的 node_modules 必须是**实体副本**，再单独把插件软链到被测分支
+ln -sfn /path/to/dsh-remote-host-branch <profile>/node_modules/dsh-remote-host
+readlink -f <profile>/node_modules/dsh-remote-host/lib/client.js   # 必须指向被测分支
+# 2) 渲染器：任意带 CDP 的 Chromium（headless Chrome 亦可），加载 lab 页面
+# 3) 跑探针（--url 用于在多标签里挑对页面）
+node scripts/patch-probe.mjs --cdp 9223 --url 19961
+```
+
+探针开头会 `Page.reload`：展开态与排序偏好会跨运行残留，不重载会读到上一轮的状态。
+
+两条证据通道：**节点身份**（改动前给行打的 expando 能否复用）与**按层级拆分的 childList 变更**（`direct` = `target === container`，即整段重写；`nested` = 就地补丁）。
+
+### 实测（2026-11-23，lab 19961，headless Chrome 157，`lib/client.js` 指向被测分支）
+
+8 条断言全部通过，`PATCH-PROBE RESULT {"total":10,"passed":10,"failed":[]}`：
+
+```
+ok baseline: three rows after expanding the group  {"order":["p-a","p-b","p-c"]}
+ok hover reveals the 3 row actions  {"before":{"display":"none","opacity":"1","width":0},"after":{"display":"flex","opacity":"1","width":74},"actionCount":3}
+ok running -> spinner added in place  {"same":true,"hasDot":true,"dotR":"9.5","written":true,"mutations":0,"nested":1}
+ok idle -> spinner removed in place  {"same":true,"hasDot":false,"written":false,"mutations":0}
+ok title text patched in place  {"same":true,"title":"Bravo renamed","written":true,"mutations":0}
+ok row menu opens and closes in place  {"open":true,"closed":false,"same":true,"anchor":{"surfaceRight":207,"triggerRight":207},"openDirect":0,"closeDirect":0}
+ok group menu open class patched in place  {"open":true,"closed":false,"openDirect":0,"closeDirect":0}
+ok pin glyph patched in place  {"same":true,"pinLabel":"取消置顶","pinHref":"#dsw-icon-pin-fill-regular","written":true,"mutations":0,"order":["p-a","p-b","p-c"]}
+ok manual order: time text patched in place  {"before":["p-a","p-b","p-c"],"after":["p-a","p-b","p-c"],"same":true,"time":"2分钟","written":true,"mutations":0}
+ok order change rebuilds the list  {"order":["p-c","p-a","p-b"],"same":false,"written":true,"mutations":2}
+```
+
+读法：`same` 是行节点是否被复用；`mutations` 是容器级 childList 变更数（`0` = 没有重建、只补丁）；`nested` 是行内就地变更。B-30 要求 `same:true` 且 `mutations:0`；B-31 要求 `same:false` 且 `mutations>0`。
+
+> **`written` 不是「容器被重写」的信号。** `lib/client.js:1297` 把它算成「重新生成的 html 串与已存串不同」，而已存串只在重建分支里更新，所以补丁路径下它会一直是 `true`（甚至出现「先 true 后 false」的陈旧基线）。判断是否重建只看 `mutations` 与 `same`；探针因此不再断言 `written`，只把它留在 JSON 里供参考。若希望 `written` 能当重建指标，需要产品侧在重建分支里单独置位——那是 `lib/client.js` 的改动，不在探针范围内。
+
+### 探针曾经的两个坑（已修）
+
+- **分组行点不开**：按行中心点击会落在尾部动作按钮的 SVG 上（`elementFromPoint` 可证），行的点击处理器不执行。改为点标题区域（`.drh-title`），并把命中的元素打进日志——布局再变时会显示「点到了哪个元素」，而不是干等超时。
+- **B-31 用例被前置状态污染**：B-31 前面刚把排序切成「手动排序」，此时 `updatedAt` 不会移动任何行，于是「不重建」是正确的；但那样就测不到 B-31。现在先切回「最近更新」再改时间。
+
+## boot 期 workspace/not-found（drh:claim）的根因与实测（2026-11-23）
+
+**现象**：页面刚加载、每次启动，控制台出现：
+
+```text
+initial Session restoration failed: SessionCreateError: session create failed:
+workspace/not-found: workspace "drh:claim" not found
+```
+
+**根因**：`src/shim/10-state.js` 的 `refersRemote()` 把整个 payload 转成 JSON 字符串后**搜任何已知远端 id** 来决定路由。启动时「恢复上次会话」会发 `session/create`，payload 里带着要恢复的**远端 sessionId**（当记住的工作区是合成 claim 时还带 `workspaceId: drh:claim`），于是命中 → create 被转发到 mount；而 mount 的 Host 并不拥有该 workspace，于是回 `workspace/not-found`。修前抓到的真实请求：
+
+```text
+POST /devbox/api/session/create
+{"request":{"workspaceId":"82a961b4-…<本地工作区>","sessionId":"session-bc72f3ac-…"}}
+```
+
+即一个**本地工作区**的 create，被按 payload 里的远端 sessionId 误路由到了 mount。
+
+**修法**（`src/shim/10-state.js` + `src/shim/20-transport.js`）：
+
+1. `createTarget()`：create 是**工作区作用域**操作，只按 `workspaceId` 判定——仅当它是远端 Host 真正拥有的工作区（`drh:<raw>` 且 `raw` 属于 `remoteWorkspaceIds`）才去 mount，其余一律本地。
+2. `isClaimCreate()` + `dropWorkspaceId()`：合成 claim 工作区只存在于合并后的客户端视图，**任何 Host 都无法解析** `drh:claim`；因此对这一个 id 去掉 `workspaceId` 后交给本地 Host，恢复链正常完成。
+3. `wouldRoute()` 把 claim 也算作「需要处理」，否则会直通 `localFetch` 而跳过上面的改写。
+
+**实测 before / after（同一组断言）**：
+
+| 断言 | 修前 shim (5268140) | 修后 shim |
+|---|---|---|
+| 本地工作区 + 远端 sessionId 的 create 不得到达 mount | **FAIL**（must not reach the mount: it does not own local-ws） | **PASS** |
+| drh:claim 的 create 本地化并去掉 workspaceId | **FAIL**（workspaceId 仍在） | **PASS** |
+
+命令：`DRH_SHIM=/tmp/old-shim.js node --test test/create-routing.test.mjs`（旧 shim → 2 fail）对比 `node --test test/create-routing.test.mjs`（2 pass）。
+
+**lab 实测**（19967，插件指向本分支；upstream 为本机私有 DSH 实例，真实远端会话 9 条）：把 `localStorage[dsh.sessions.current]` 指向一条**远端** sessionId 后重载，Network 抓到的 `session/create`：**mount 0 / local 0**；`workspace/not-found` 类日志 **0 条**；composer `contenteditable=true`、无「会话不可用」。
+
+**不回归**：claim 行仍 `display: none`（远端行不可见、不泄漏进原生列表）；composer 可用；`npm run check` 49/49。
+
+### 补充：rpc 载体同修 + 路由判据审计（2026-11-23）
+
+**为什么必须补**：桌面壳发布 `__DSH_TRANSPORT__` 且可能带 `rpc`；shim 在 `diag.hasRpc === true && typeof base.rpc.call === 'function'` 时用 rpc 覆盖 fetch 包装（`src/shim/80-install.js` 的 rpc 分支）。只修 fetch 分支的话，**在最关键的那个部署上等于没修**。
+
+**改动**：`80-install.js` 的 rpc 分支（原第 149 行）对 `session/create` 也走 `createTarget()`；claim 用新helper `withoutWorkspaceId()`（`10-state.js`）改写——rpc 载体拿到的是 payload **对象**而非 JSON body，所以需要对象级重写（`dropWorkspaceId` 仍是 fetch 的 body 字符串变体），且不修改调用方的 payload。
+
+**rpc 用例 before / after**（同一组断言）：
+
+| 断言 | 修前 shim (5268140) | 修后 shim |
+|---|---|---|
+| rpc carrier：本地工作区的 create 不得到达 mount | **FAIL**（the mount must not receive a create for a local workspace） | **PASS** |
+| rpc carrier：claim 的 create 到达本地载体且无 workspaceId | **FAIL**（the claim workspaceId is dropped before the local carrier sees it） | **PASS** |
+
+命令：`DRH_SHIM=/tmp/old-shim.js node --test test/create-routing.test.mjs` → 4 fail；`node --test test/create-routing.test.mjs` → 4 pass。测试助手 `test/helpers/page.mjs` 新增 `options.rpc` 可种一个解码后的 rpc 载体并记录调用（`rpcCalls` / `rpcCallsFor`）。
+
+**路由判据审计**（登记在 `src/shim/20-transport.js` 决策点注释里，本次只改 session/create）：
+
+| 类别 | 端点 | 判定 |
+|---|---|---|
+| 工作区作用域 | `session/create` | **已修**：按 `workspaceId` 判定 |
+| 工作区作用域（待收） | `workspace/{rename,delete,insertBefore,insertSessionBefore}` | 仍是子串命中。今天成立只因远端工作区发布为 `drh:<raw>` 且 `<raw> ∈ remoteWorkspaceIds`，文本里天然含 raw id；本地工作区 id 不可能包含它。与 create 同型脆弱，下一版按 `workspaceId` 收 |
+| 路径作用域 | `directoryPicker/*` | payload 无 id，不会被路由，安全 |
+| 会话作用域 | `session/{follow,events,state,page,projections,prompt,cancel,rename,fork,updateQueue,wait,attachment,selectModel}` | 子串判定**正确**：被点名的 id 就是主体（含 `address.sessionId` 形式） |
+| 特例 | `session/list`、`$events`、`$events/result` | 走合并 / 事件结果改写，不走该判据 |
+| 宿主全局（风险） | `settings/*`、`pluginManager/*`、`pluginInventory/*`、`agentPresets/list`、`permissionPresets/catalog`、`skills/list`、`schedule/*`、`speech/*`、`messageFeedback/*`、`workspaceFiles/*` | 无会话/工作区主体，只有「路径或标题里恰好出现某个 id」才会误路由；保持现状，`workspaceFiles` 的路径含 id 是最现实的一条 |
+
+`npm run check`：51/51。
