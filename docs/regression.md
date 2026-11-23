@@ -189,6 +189,8 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 | B-27 | 页面 hidden 时**不轮询** | CDP `Page.setWebLifecycleState` 置 frozen 后统计 Network 中 `devbox/api/session/list` 请求数不再增长，恢复后恢复增长 | hidden 期间仍每 4 秒发请求 |
 | B-28 | 数据持续变化时**不抖动** | 每 5 秒改一次某会话 running/updatedAt，采 60 秒：announce 随变化增长，但 DOM 节点数与 heap 平稳 | 每次 tick 整块重绘，节点数/内存持续上涨 |
 | B-29 | 手动排序**不被周期刷新改写** | 切「手动排序」并拖拽（或写 `localStorage["drh:order"]`），让轮询跑 60 秒，前后组顺序数组应完全相同 | 刷新后组顺序被活跃度重排 |
+| B-30 | **状态变化只补丁、不重建**（行节点身份不变） | 给某行节点打 expando，只改它的 running（不要改 updatedAt，否则会重排）：断言该节点仍是同一对象、行内 `.drh-stateDot` 被就地增删、且容器的**直接子节点** childList 变更数为 **0**（用 MutationObserver，把 target===container 与嵌套变更分开计数） | 行被销毁重建；容器直接子节点被替换；hover/menu 状态在刷新时丢失 |
+| B-31 | **排序变化才重建** | 把某行 updatedAt 改大到会改变其位置：断言发生一次结构重建且行顺序正确（原路径） | 顺序变了却仍走补丁路径（行序错乱）；或顺序没变也重建 |
 
 ### B-26..B-29 实测基线（2026-11-20，lab 19980，headless Chrome 157，viewport 1440×900）
 
