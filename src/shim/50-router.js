@@ -427,6 +427,8 @@
     /** Re-open the remote leg's streams on the socket that just replaced it. */
     function replayRemoteStreams() {
       if (remoteStreams.size === 0) return
+      var sent = 0
+      traceEvent('replay-begin', { total: remoteStreams.size, depth: reconnectDepth })
       remoteStreams.forEach(function (entry, oldId) {
         byUpstream.delete(oldId)
         counter += 1
@@ -442,10 +444,11 @@
         remoteStreams.set(nextId, entry)
         try {
           sendLeg('remote', JSON.stringify({ type: 'open', streamId: nextId, endpoint: entry.endpoint, payload: entry.payload }))
+          sent += 1
         } catch (error) { /* the next attempt retries */ }
       })
       note('replay-remote', { streams: remoteStreams.size })
-      traceEvent('replay-remote', { streams: remoteStreams.size, depth: reconnectDepth })
+      traceEvent('replay-end', { streams: sent, total: remoteStreams.size, depth: reconnectDepth })
     }
 
     /**

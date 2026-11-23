@@ -97,4 +97,4 @@ if (socket === undefined) {
 
 - 未 kill / 未 attach 用户 App；未动远端 runtime；harness 用私有副本 `/tmp/dsh-elec-app-c4`。
 - 本轮文档因引用真实主机/路径，被 `verify-sensitive` 拦下，已改为占位符（`devbox.example.com:3080`、`/Users/me`）；
-  另注意一个**我方哨兵的假阳性**：`v8 15.2.124.28-electron.0` 被当成 IPv4 命中 —— 版本号里的点分数字应豁免，值得后续修规则。
+  另注意一个**我方哨兵的假阳性**：`v8=15.2.124.28-electron.0` 被当成 IPv4 命中 —— 版本号里的点分数字应豁免，值得后续修规则。
