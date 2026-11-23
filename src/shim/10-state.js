@@ -108,6 +108,8 @@
   var MOUNT_TIMEOUT_MS = 2500
 
   async function mergeSessionList(input, init, request) {
+    // Safe mode: this page is in a boot loop, so answer locally and skip the mount.
+    if (SAFE_MODE === true) return localFetch(input, init)
     // The mount leg must be bounded: an unreachable remote would otherwise leave this
     // promise pending forever, so the client's session/list never resolves and the whole
     // UI freezes (which then ends in a renderer crash). Fall back to the local answer.
