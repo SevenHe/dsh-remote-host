@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.14.7 — 2026-11-23
+
+### 修复
+
+- **远端会话模型位显示「请选择模型」**：两个缺口一起补——(A) 远端会话行里的 `projections.modelSelection`（即「已保存的选择」）此前被整份丢弃；(B) 模型目录只来自本机，而两端模型 id 本来就不同（本机 `modelhub-deepseek-v4.1-flash`、远端 `deepseek-v4.1-flash`），于是「已保存的选择不在目录中」。现在 (A) 透传 `projections`（8 KiB 上限），(B) `session/modelCatalog` 按**会话所属宿主**取（远端焦点 → 持久化当前会话 → 本机兜底；冷启动等待首个远端快照落定；mount 侧 2.5 s 超时且失败降级本机），并且**不做并集**。
+- **`session/create` 被误路由到远端**：判据从「payload 里出现任意远端 id」改为按工作区作用域判定，`drh:claim` 这类合成 id 去掉后交给本地宿主；fetch 与 rpc 两个载体同修。此前一个**本地工作区**的 create 会因为 payload 带远端 sessionId 被拽到 mount，进而报 `workspace/not-found`。
+- **补丁渲染的 `written` 语义**：它原本表示「基线不同」，而基线只在重建分支刷新，导致每次状态补丁都被误判为重写并重新 `focus()` 搜索框（打字时光标被拉回）。焦点恢复与诊断标志改用真实的 `rewrote`。
+
+### 新增
+
+- **渲染进程 JS 错误取证**：`window.error`、`unhandledrejection`、`console.error` 进入面包屑并立即上报（绕过 1 次/秒限速，上限 20 条/次加载）。桌面崩溃日志一直写着「no error-level renderer console output was captured」，这条通道补上那份缺失证据。
+- **`scripts/patch-probe.mjs` 行级补丁探针**：10 条断言，用「节点身份 + 容器级 childList 次数」区分补丁与重建。
+
+### 已知限制（诚实记录）
+
+- **同一次页面生命周期内切换宿主后，模型目录仍是上一次的，需重载页面**。根因在客户端：目录在页面启动时取一次并全程缓存，且该请求早于会话恢复，shim 无法强制其重取。根治需上游支持（`session/modelCatalog` 接受 sessionId 按会话返回，或切会话时失效缓存）。
+
+### 验证
+
+- **58 个数据面测试全绿**；`lib/shim.js` 重建一致；仓库哨兵 0 命中。
+- 模型修复实测（真实 devbox，112 条远端会话中 60 条带 `modelSelection`）：重载后打开远端会话，模型位显示 `DeepSeek V4.1 Flash (CPA) Max`、占位消失；该次目录请求两次均走 mount；本地会话仍走本机目录；mount 被阻断时降级本机、无错误、请求不增长。
+
 ## 1.14.6 — 2026-11-23
 
 ### 新增
