@@ -47,7 +47,14 @@ const rules = [
     find(line) {
       for (const match of line.matchAll(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g)) {
         const value = match[0]
-        if (ALLOWED_IPV4.has(value) !== true) return value
+        if (ALLOWED_IPV4.has(value) === true) continue
+        // A dotted quad immediately after a version label is a version, not an address:
+        // crash records quote "v8=15.2.124.28-electron.0", and rewriting that number
+        // would cost more accuracy than the false positive costs safety. The exception
+        // is deliberately narrow — it only fires on the label itself.
+        const before = line.slice(Math.max(0, match.index - 12), match.index)
+        if (/(?:v8|electron|node|chrome|version)=$/i.test(before) === true) continue
+        return value
       }
       return null
     },
