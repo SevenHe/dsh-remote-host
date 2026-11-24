@@ -13,7 +13,7 @@
  * executed as node without ELECTRON_RUN_AS_NODE.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -70,8 +70,12 @@ if (strays.length > 0) {
   console.error('install-selfheal: remove those first, or launchd runs the agent more than once')
   process.exit(2)
 }
-mkdirSync(join(home, 'Library/LaunchAgents'), { recursive: true })
-mkdirSync(logDir, { recursive: true })
+// --dry-run keeps this script testable without ever touching the launchd session.
+const dryRun = args.includes('--dry-run')
+if (dryRun !== true) {
+  mkdirSync(join(home, 'Library/LaunchAgents'), { recursive: true })
+  mkdirSync(logDir, { recursive: true })
+}
 
 const lines = [
   '<?xml version="1.0" encoding="UTF-8"?>',
@@ -96,6 +100,11 @@ const lines = [
   '</plist>',
   '',
 ]
+if (dryRun === true) {
+  console.log('install-selfheal: would write ' + plistPath)
+  console.log('install-selfheal: would bootstrap ' + LABEL + ' (dry run — nothing changed)')
+  process.exit(0)
+}
 writeFileSync(plistPath, lines.join('\n'))
 bootout()
 execFileSync('launchctl', ['bootstrap', 'gui/' + process.getuid(), plistPath], { stdio: 'inherit' })

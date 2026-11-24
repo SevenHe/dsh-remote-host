@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.14.10 — 2026-11-24
+
+### 修复
+
+- **`install-selfheal.mjs` 永远以退出码 1 结束**：收尾校验用了 `statSync` 却从未 import，`ReferenceError` 抛在写 plist 与 `launchctl bootstrap` **之后** —— 于是「实际装上了、命令却报失败」。反复重跑正是历史上出现两个同名 Label 自愈任务的来源之一。补上该 import。
+
+### 新增
+
+- `install-selfheal.mjs --dry-run`：只打印将写入的 plist 与将 bootstrap 的 Label，不落盘、不碰 launchd。
+- `test/install-selfheal.test.mjs`：两个用例锁定「同名 Label 阻断安装」与「`--dry-run` 不写任何文件」，两者都不触碰真实 launchd。
+
+### 验证
+
+- 临时 `HOME` 实测：安装 → 退出码 0、agent 载入、plist 写入；紧接着卸载 → 退出码 0、agent 消失、目录 0 个残留；真实 `~/Library/LaunchAgents` 未被改写。
+
 ## 1.14.9 — 2026-11-24
 
 ### 新增
