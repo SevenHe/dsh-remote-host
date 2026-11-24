@@ -113,7 +113,17 @@ bash ~/Workspace/dsh-remote-host/scripts/preflight.sh
 | `no second DSH host (dsh web)` / `no dsh web autostart` | 第二个宿主共用 `~/.dsh` |
 | `no ensure-profile rewriter` | 自愈任务偷偷改软链 |
 
-## 8. 标准动作（换版本/修代码之后）
+## 8. 打包（换机器 / 升级 DSH 版本）
+
+App 必须带上游还没有的模型目录补丁，所以**不能**用官方命令直接出包：
+
+```bash
+node ~/Workspace/dsh-remote-host/scripts/package-app.mjs     # 补丁 → 构建 → 出 dmg → 校验产物
+```
+
+它会拒绝任何不含补丁标记（`OwnerEntry`）的产物。远端宿主也要同一份补丁：`node scripts/package-app.mjs deploy-remote --ssh <host>`。细节见 [docs/packaging.md](packaging.md)。
+
+## 9. 标准动作（换版本/修代码之后）
 
 1. `cd ~/Workspace/dsh-remote-host && npm ci`（缺依赖时）；
 2. `bash scripts/preflight.sh` → 必须 `PREFLIGHT OK`（App 没开时 `running host` 显示 `none`，属正常）；

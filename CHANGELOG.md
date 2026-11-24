@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.14.9 — 2026-11-24
+
+### 新增
+
+- **打包入口 `scripts/package-app.mjs`（`npm run package:app`）**：把「打上游模型目录补丁 → 构建 → 出 unsigned dmg → 校验产物」串成一条命令，任何一步不满足即非零退出。换机器或升级 DSH 版本时，不再依赖谁记得手动打补丁。
+- **产物自证**：`verify` 子命令挂载 dmg 直接读 `app.asar`，用补丁独有标记 `OwnerEntry`（官方 0 处 / 补丁 9 处）判定；官方 stock 包会被以退出码 1 拒绝。通过后复制到输出目录并写 `manifest.json`（版本、上游基线 commit、补丁 sha256、标记计数、dmg sha256 与字节数）。
+- **远端部署**：`deploy-remote --ssh <host>` 先把远端 runtime 里的两个包备份成 `modelcatalog-backup-*`，再解包覆盖，回滚命令随输出打印。
+- `docs/packaging.md`：换机器 / 升级版本 / 复核 / 回滚的完整步骤。
+
+### 修复
+
+- **preflight 的模型补丁检查形同虚设**：原先数 `storeFor`，但官方 `app.asar` 里本来就有 17 处，即使装成官方原版也会显示 ok。现在改为数补丁独有标记 `OwnerEntry`（官方 0 处），装错版本会在启动前就被拦下。
+
+### 变更
+
+- 新增 `npm run verify:app -- <dmg>` 与 `npm run deploy:model-patch` 两个入口。
+
+### 验证
+
+- 现网 dmg 复核：`version 0.2.2-rc.5`、`OwnerEntry 9`、`storeFor 23` → OK（退出码 0）；
+- 官方 0.2.2-rc.5 App 复核：`OwnerEntry 0`、`storeFor 17` → 按预期被拒（退出码 1）；
+- `--dry-run` 打印完整命令序列且不产生任何写入。
+
 ## 1.14.8 — 2026-11-24
 
 本版是「可以直接用」的稳定版：宿主与客户端两端语义一致，退出 App 重开即可正常加载远端工作区与会话。

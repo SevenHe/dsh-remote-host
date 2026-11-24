@@ -19,8 +19,10 @@ plugin_git() { env -i HOME="$HOME" PATH="$CLEAN_PATH" git -C "$R" "$@"; }
 if [ -d "$APP" ]; then
   v=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist" 2>/dev/null)
   say "app version" "${v:-unknown}"
-  n=$(count_of storeFor "$APP/Contents/Resources/app.asar")
-  [ "$n" -gt 0 ] && say "client model patch" "ok ($n refs)" || { say "client model patch" "MISSING"; fail=1; }
+  # 'OwnerEntry' exists only in the patched client; the stock app.asar has none of it,
+  # so this is the one marker that can tell a patched build from an official one.
+  n=$(count_of OwnerEntry "$APP/Contents/Resources/app.asar")
+  [ "$n" -gt 0 ] && say "client model patch" "ok ($n refs)" || { say "client model patch" "MISSING (stock build — run scripts/package-app.mjs)"; fail=1; }
 fi
 
 total=$(ls -d /Applications/*DeepSeek*Harness*.app 2>/dev/null | wc -l | tr -d " ")
