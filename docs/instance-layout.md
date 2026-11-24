@@ -73,12 +73,13 @@ node "$R/scripts/build-shim.mjs" --check  # lib/shim.js 必须等于 src/shim/* 
 
 ## 5. 自愈任务的硬约束
 
-`scripts/ensure-profile.mjs`（以及任何 launchd 自愈任务）必须满足：
+`scripts/ensure-profile.mjs` 只修 profile 的**注册状态**（`package.json` 的 bundle 条目与依赖、`cordis.patch.yml` 的配置行），**不创建、也不改写** `node_modules/dsh-remote-host` 软链。硬约束：
 
-- **只在目标不存在时创建**软链；已存在且指向一个合法 checkout 时**绝不覆盖**；
-- 同一 Label 只允许存在一个 plist（本机曾出现两个同名 Label 的 plist，导致每 30 分钟把软链改成实验分支）。
+- 该脚本**不得触碰** profile 的 `node_modules/**`；若将来新增创建软链的逻辑，必须「只在不存在时创建，已存在且合法时绝不覆盖」；
+- 同一 Label 只允许存在一个 `*.plist`（本机曾因两个同名 Label 的 plist 每 30 分钟把软链改成实验分支）。`scripts/install-selfheal.mjs` 现在会在发现同名 Label 的**其它** plist 时直接拒绝安装；
+- 回归用例：`test/ensure-profile.test.mjs` 固定了「已注册时零改动」与「软链目标不得改变」。
 
-当前已清理：两个 `ensure-profile` plist 均已从 LaunchAgents 移除，备份在 `~/Workspace/dsh-app-backup/`。
+当前状态：没有任何 `ensure-profile` plist 安装（`launchctl list | grep ensure-profile` 为空），历史 plist 备份在 `~/Workspace/dsh-app-backup/`。
 
 ## 6. Git 工具链注意事项
 

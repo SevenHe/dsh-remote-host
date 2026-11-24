@@ -101,4 +101,9 @@ web_agents=$(ls "$HOME/Library/LaunchAgents/" 2>/dev/null | grep "\.plist$" | gr
 agents=$(ls "$HOME/Library/LaunchAgents/" 2>/dev/null | grep "\.plist$" | grep -ci "ensure-profile") || true
 [ "${agents:-0}" = "0" ] && say "no ensure-profile rewriter" "ok" || { say "ensure-profile rewriter" "FOUND ${agents}"; fail=1; }
 
+# Two desktop instances fight over the single-instance lock and the profile; the loser
+# silently drops workspace state. The main process is the one argv line with no flags.
+app_n=$(ps -axo command= | grep -cE "^/Applications/DeepSeek Harness\.app/Contents/MacOS/DeepSeek Harness$") || true
+[ "${app_n:-0}" -le 1 ] && say "single desktop instance" "ok (${app_n:-0} running)" || { say "single desktop instance" "FOUND ${app_n}"; fail=1; }
+
 if [ "$fail" = "0" ]; then echo "PREFLIGHT OK"; exit 0; else echo "PREFLIGHT FAILED"; exit 1; fi

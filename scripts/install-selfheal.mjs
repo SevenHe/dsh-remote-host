@@ -13,7 +13,7 @@
  * executed as node without ELECTRON_RUN_AS_NODE.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -29,7 +29,25 @@ const node = argOf('node', process.execPath)
 const script = join(root, 'scripts/ensure-profile.mjs')
 const home = process.env.HOME ?? ''
 const logDir = join(home, 'Library/Logs')
-const plistPath = join(home, 'Library/LaunchAgents', LABEL + '.plist')
+const agentsDir = join(home, 'Library/LaunchAgents')
+const plistPath = join(agentsDir, LABEL + '.plist')
+
+/**
+ * launchd keys an agent on its Label, not on the file name, so a second plist carrying
+ * the same Label makes it run twice. That is how this machine once ended up with two
+ * copies repairing the profile every 30 minutes.
+ */
+function strayAgentPlists() {
+  try {
+    return readdirSync(agentsDir)
+      .filter((name) => name.endsWith('.plist'))
+      .map((name) => join(agentsDir, name))
+      .filter((path) => path !== plistPath)
+      .filter((path) => {
+        try { return readFileSync(path, 'utf8').includes('<string>' + LABEL + '</string>') } catch (error) { return false }
+      })
+  } catch (error) { return [] }
+}
 
 const bootout = () => {
   try { execFileSync('launchctl', ['bootout', 'gui/' + process.getuid() + '/' + LABEL], { stdio: 'ignore' }) } catch (error) { /* not loaded */ }
@@ -43,6 +61,13 @@ if (args.includes('--uninstall')) {
 }
 if (!existsSync(script)) {
   console.error('install-selfheal: missing ' + script)
+  process.exit(2)
+}
+const strays = strayAgentPlists()
+if (strays.length > 0) {
+  console.error('install-selfheal: another plist already carries the Label ' + LABEL + ':')
+  for (const stray of strays) console.error('  ' + stray)
+  console.error('install-selfheal: remove those first, or launchd runs the agent more than once')
   process.exit(2)
 }
 mkdirSync(join(home, 'Library/LaunchAgents'), { recursive: true })
