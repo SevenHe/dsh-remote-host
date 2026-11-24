@@ -11,9 +11,8 @@
     var target = typeof url === 'string' ? url : String(url)
     note('ws-factory', { url: target.slice(0, 90), mux: isMuxUrl(target) === true })
     if (isMuxUrl(target) !== true) return openSocket(target)
-    if (STREAM_RELAY === true) {
-      // Only rewrite the URL: the shipped connection layer dials the mounted mux itself and
-      // owns reconnects, so no reconnect socket is ever created here.
+    if (STREAM_RELAY === true && ATTACH_REMOTE === true) {
+      // This window has a single remote Host, so all streams can use its mux.
       var relayed = mountSocketUrl(target)
       if (relayed !== undefined) {
         note('stream-relay', { from: target.slice(0, 90), to: relayed.slice(0, 90) })

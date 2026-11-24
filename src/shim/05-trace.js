@@ -47,6 +47,7 @@
     'reconnect-begin': true, 'reconnect-end': true,
     'reconnect-nocarrier': true, 'replay-begin': true, 'replay-end': true,
     'stream-open': true, 'service-register': true, 'crash-marker': true,
+    'host-relay-status': true, 'workspace-baseline': true, 'session-snapshot': true,
   }
   /** Last entries kept in a plain global, so an external poller survives a failed send. */
   var TRACE_TAIL = 60

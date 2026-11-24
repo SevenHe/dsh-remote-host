@@ -80,15 +80,7 @@
    * keeps the shipped socket untouched and only merges unary traffic.
    */
   var STREAMS = config.streams === true
-  /**
-   * Direction 1: do not own the remote stream connection.
-   *
-   * With this on, the mux URL is only rewritten to the mounted path and handed back to the
-   * shipped connection layer, which owns the socket and its reconnect. Creating reconnect
-   * sockets ourselves is what killed the renderer (SIGTRAP / brk #0); the shipped layer
-   * survives the same flap. On by default because it is the fix for the short-flap crash; an
-   * explicit streamRelay: false keeps the old router reachable as an escape hatch.
-   */
+  /** Let the Host reconnect remote streams. Explicit false keeps the old router path. */
   var STREAM_RELAY = config.streamRelay !== false
   /** The catch-all global WebSocket replacement; the carrier factory is always patched. */
   var GLOBAL_WS = config.globalWebSocket !== false
@@ -100,6 +92,7 @@
    * working.
    */
   var ATTACH_REMOTE = config.attach === 'remote'
+  var HOST_RECONNECTS_REMOTE = STREAM_RELAY === true && ATTACH_REMOTE !== true
   /**
    * The super agent plugin serves its own routes under `/orchestrator/` (its API
    * prefix is `/orchestrator/api/`, registered with `ctx.webServer.register`).

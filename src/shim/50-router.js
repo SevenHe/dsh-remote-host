@@ -154,6 +154,7 @@
     var counter = 0
     /** Frames seen per upstream leg, for the diagnostics report. */
     var relays = {}
+    var remoteRelayDialed = false
 
     /** First reconnect delay and its ceiling; see reconnectBackoff. */
     var RECONNECT_BASE_MS = 200
@@ -182,12 +183,15 @@
         upstreams.delete(kind)
         traceEvent('leg-dropped-stale', { kind: kind, socketId: existing.__drhSocketId, readyState: existing.readyState })
       }
-      var target = kind === 'local' ? localPath : mountSocketUrl(localPath)
+      var hostRelay = kind === 'remote' && HOST_RECONNECTS_REMOTE === true
+      if (hostRelay && remoteRelayDialed) return undefined
+      var target = kind === 'local' ? localPath : mountSocketUrl(localPath, hostRelay)
       if (target === undefined) {
         note('leg-no-url', { kind: kind, from: localPath })
         return undefined
       }
       var socket
+      if (hostRelay) remoteRelayDialed = true
       try {
         socket = openSocket(target)
       } catch (error) {
@@ -210,6 +214,7 @@
       on('open', function () {
         note('leg-opened', { kind: kind })
         if (kind !== 'remote') { publishStatus(kind, 'open'); return }
+        if (hostRelay) return
         traceEvent('status-open-enter', {})
         // Publishing the status reaches the shipped client synchronously; defer it so the open
         // dispatch finishes before anything re-subscribes.
@@ -230,12 +235,12 @@
       on('error', function (event) {
         note('leg-error', { kind: kind, message: String((event && (event.message || event.type)) || 'error') })
         publishStatus(kind, 'error')
-        if (kind === 'remote') noteRemoteUnavailable('error')
+        if (kind === 'remote' && !hostRelay) noteRemoteUnavailable('error')
       })
       on('close', function (event) {
         note('leg-closed', { kind: kind, code: (event && event.code) || 0 })
         if (kind !== 'local') publishStatus(kind, 'error')
-        if (kind === 'remote') noteRemoteUnavailable('close')
+        if (kind === 'remote' && !hostRelay) noteRemoteUnavailable('close')
       })
       on('message', function (event) {
         relays[kind] = (relays[kind] || 0) + 1
@@ -269,7 +274,7 @@
         })
         // The mounted socket can drop after delivering its first frames; keep the
         // remote side usable by reconnecting and replaying its streams.
-        reconnectRemote()
+        if (!hostRelay) reconnectRemote()
       })
       // A lazily opened leg is still CONNECTING when the first frame arrives;
       // a browser WebSocket throws on send() there, so buffer until open.
@@ -343,6 +348,14 @@
       var frame
       try { frame = JSON.parse(typeof data === 'string' ? data : '') } catch (error) { return }
       if (frame === null || typeof frame !== 'object') return
+      if (kind === 'remote' && HOST_RECONNECTS_REMOTE === true && frame.type === 'drh/relay-status') {
+        if (frame.state === 'open' || frame.state === 'error' || frame.state === 'connecting') {
+          if (frame.state === 'error') remoteEventClientId = undefined
+          traceEvent('host-relay-status', { state: frame.state })
+          publishStatus('remote', frame.state)
+        }
+        return
+      }
       var route = byUpstream.get(frame.streamId)
       if (route === undefined) return
       if (route.merge === true) {
@@ -353,7 +366,10 @@
           applyIncrement(side, frame.value)
           if (kind === 'remote') learnWorkspaces(side)
           if (frame.value !== null && typeof frame.value === 'object'
-            && (frame.value.type === 'baseline' || frame.value.type === 'replace')) side.seen = true
+            && (frame.value.type === 'baseline' || frame.value.type === 'replace')) {
+            side.seen = true
+            if (frame.value.type === 'baseline') traceEvent('workspace-baseline', { kind: kind })
+          }
           flushMerged(route.clientId, state, false)
           return
         }
@@ -424,23 +440,27 @@
         var missing = code.indexOf('not-found') !== -1 || message.indexOf('not found') !== -1
         var original = opens.get(route.clientId)
         if (missing === true && original !== undefined && original.retried !== true) {
-          original.retried = true
-          note('retry-remote', { endpoint: original.endpoint })
-          byUpstream.delete(frame.streamId)
           try {
-            // The remote leg is lazy: connecting here is the point of the retry.
-            connect('remote')
-            counter += 1
-            var retryId = route.clientId + '~retry' + counter
-            byUpstream.set(retryId, { clientId: route.clientId, kind: 'remote', merge: false, mode: 'single' })
-            byClient.set(route.clientId, [{ kind: 'remote', upstreamId: retryId }])
-            sendLeg('remote', JSON.stringify({ type: 'open', streamId: retryId, endpoint: original.endpoint, payload: original.payload }))
-            return
+            if (connect('remote') !== undefined) {
+              original.retried = true
+              note('retry-remote', { endpoint: original.endpoint })
+              byUpstream.delete(frame.streamId)
+              counter += 1
+              var retryId = route.clientId + '~retry' + counter
+              byUpstream.set(retryId, { clientId: route.clientId, kind: 'remote', merge: false, mode: 'single' })
+              byClient.set(route.clientId, [{ kind: 'remote', upstreamId: retryId }])
+              sendLeg('remote', JSON.stringify({ type: 'open', streamId: retryId, endpoint: original.endpoint, payload: original.payload }))
+              return
+            }
           } catch (error) { /* fall through: forward the original failure */ }
         }
       }
       if (frame.type === 'error') {
         note('upstream-error', { kind: route.kind, error: JSON.stringify(frame.error ?? {}).slice(0, 120) })
+      }
+      if (frame.type === 'item' && frame.value?.type === 'snapshot'
+        && opens.get(route.clientId)?.endpoint === 'session/follow') {
+        traceEvent('session-snapshot', { kind: kind })
       }
       var out = {}
       for (var key in frame) { if (Object.prototype.hasOwnProperty.call(frame, key)) out[key] = frame[key] }
@@ -695,14 +715,21 @@
           var upstreamId = frame.streamId + '~' + kind + counter
           byUpstream.set(upstreamId, { clientId: frame.streamId, kind: kind, merge: merge, mode: mode })
           opened.push({ kind: kind, upstreamId: upstreamId })
-          if (kind === 'remote') {
+          if (kind === 'remote' && HOST_RECONNECTS_REMOTE !== true) {
             remoteStreams.set(upstreamId, {
               clientId: frame.streamId, endpoint: frame.endpoint, payload: frame.payload, merge: merge, mode: mode,
             })
           }
           sendLeg(kind, JSON.stringify({ type: 'open', streamId: upstreamId, endpoint: frame.endpoint, payload: frame.payload }))
         }
-        if (opened.length === 0) return
+        if (opened.length === 0) {
+          if (HOST_RECONNECTS_REMOTE === true) emitToClient({
+            type: 'error',
+            streamId: frame.streamId,
+            error: { code: 'gateway/remote-unavailable', message: 'Remote stream relay is unavailable', details: {} },
+          })
+          return
+        }
         byClient.set(frame.streamId, opened)
         opens.set(frame.streamId, { endpoint: frame.endpoint, payload: frame.payload, retried: false })
         if (merge === true) {

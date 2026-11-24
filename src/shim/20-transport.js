@@ -245,19 +245,25 @@
   }
 
   /** Resolve the same channel beneath the mount, preserving scheme and query. */
-  function mountSocketUrl(url) {
+  function mountSocketUrl(url, hostRelay) {
     try {
       var parsed = new URL(url, typeof location === 'object' ? location.href : undefined)
-      parsed.pathname = MOUNT + parsed.pathname
+      parsed.pathname = MOUNT + (hostRelay === true ? '/__dsh_remote_host__/mux' : parsed.pathname)
       return parsed.toString()
     } catch (error) {
       return undefined
     }
   }
 
+  var usingSocketFactory = false
+
   function openSocket(url) {
     var factory = previous.createWebSocket
-    if (typeof factory === 'function') return factory(url)
+    if (typeof factory === 'function') {
+      // The supplied factory may itself call the global WebSocket constructor.
+      usingSocketFactory = true
+      try { return factory(url) } finally { usingSocketFactory = false }
+    }
     return new NativeWebSocket(url)
   }
 
@@ -266,8 +272,8 @@
     if (typeof url !== 'string') return false
     try {
       var parsed = new URL(url, typeof location === 'object' ? location.href : undefined)
-      return parsed.pathname === '/api/remote.mux' || parsed.pathname.slice(-15) === '/api/remote.mux'
+      return parsed.pathname === '/api/remote.mux'
     } catch (error) {
-      return url.length >= 15 && url.slice(-15) === '/api/remote.mux'
+      return url === '/api/remote.mux'
     }
   }

@@ -104,10 +104,10 @@
       // JS stand-in. `globalWebSocket: false` keeps the factory patch only.
       if (GLOBAL_WS === true) try {
         var RoutedWebSocket = function (url, protocols) {
-          if (isMuxUrl(String(url))) {
+          if (usingSocketFactory !== true && isMuxUrl(String(url))) {
             note('ws-patched-mux', { url: String(url) })
             try {
-              return createMuxRouter(String(url))
+              return routeCreateWebSocket(String(url))
             } catch (error) {
               note('ws-patched-failed', { error: String(error) })
             }

@@ -26,6 +26,9 @@
     "ssh",
     "collaboration"
   ],
+  "dependencies": {
+    "ws": "8.23.0"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^0.2.2-rc.3"
   },

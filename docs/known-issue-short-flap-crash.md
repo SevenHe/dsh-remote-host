@@ -2,7 +2,7 @@
 
 ## 状态
 
-**已修复**：config.streamRelay **默认开启** —— 挂载的 mux 连接不再由插件自建，只把 URL 改写到挂载路径、交给官方连接层，连接与重连全部由官方层负责。显式 streamRelay: false 仍可回退旧的 mux router（逃生门）。
+`config.streamRelay` 默认开启。仅远端窗口将原生 mux 指向远端挂载路径，由官方连接层重连。混合窗口保留本地 mux，由本机宿主重连远端 mux，按会话归属读取历史。`streamRelay: false` 切回旧版分流和重连。
 
 ## 触发条件（历史记录）
 
@@ -14,7 +14,7 @@
 
 判别实验结论：**不创建重连 socket -> 0 崩溃；创建 -> 5/5 崩**（即使把创建动作移到新栈上仍然崩）。触发点是「插件自己新建远端 mux socket」这个动作本身。
 
-## 修复原理
+## 仅远端窗口修复原理
 
 1. routeCreateWebSocket 命中 mux URL 时不再构建 router，而是用 mountSocketUrl 改写路径后返回原生 socket（openSocket），插件不持有连接、不重连；
 2. 宿主侧既有 proxyUpgrade 中继把 /devbox/api/remote.mux 转发到远端，Host 与 cookie 由它补；
