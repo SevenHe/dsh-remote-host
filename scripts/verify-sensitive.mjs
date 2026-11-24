@@ -138,7 +138,20 @@ const rules = [
  * not after, so the untracked set is scanned too.
  */
 function listFiles(args) {
-  return execFileSync("git", args, { encoding: "utf8" }).split("\u0000")
+  /**
+   * Run git with a scrubbed environment.
+   *
+   * A shell can carry `GIT_CONFIG_VALUE_<n>` without the matching `GIT_CONFIG_KEY_<n>`
+   * (an agent harness injects them). git then dies with "unable to parse command-line
+   * config", and the sentinel would look broken instead of catching leaks. Only the
+   * variables git needs are kept.
+   */
+  const env = {}
+  for (const key of ["HOME", "PATH", "TMPDIR", "LANG", "LC_ALL"]) {
+    if (process.env[key] !== undefined) env[key] = process.env[key]
+  }
+  if (env.PATH === undefined) env.PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+  return execFileSync("git", args, { encoding: "utf8", env }).split("\u0000")
 }
 const files = Array.from(new Set([
   ...listFiles(["ls-files", "-z"]),
