@@ -452,3 +452,34 @@ if (values.length !== expected && !hasCallerSignal) {
 **本插件的缓解（不依赖上游）**：`session/modelCatalog` 只有在请求 **args 里确实带 `sessionId`** 时才可能被路由到 mount；**0 参数的 Host 级预热一律留在本机**（本机未打补丁，描述符 0 参数，正好匹配），并记 `catalog-prewarm-local`。同时该路由逻辑整体包了 try/catch —— 判定失败也降级为本机目录，绝不冒泡成未处理异常。
 
 单测固定了该契约：`routing: the Session-less warm-up never reaches a Host that wants an argument` —— 即使焦点在远端会话上，0 参数读取的 mount 调用次数必须为 0，且返回本机目录。
+
+## 客户端默认开 relay 而宿主没有 relay：重开 App 后远端挂载加载失败（2026-11-24）
+
+**症状**：退出并从「应用程序」重开 App 后，远端工作区/会话加载不出来（远端会话打不开）；同一台机器此前一直可用，网络与凭据都没变。
+
+**根因（两端错配，不是网络问题）**：
+
+| 环节 | 事实 | 证据 |
+|---|---|---|
+| 客户端默认开 relay | `var STREAM_RELAY = config.streamRelay !== false`，不配置即为开 | `git show e546f2b:src/shim/00-config.js` |
+| 客户端据此改写 mux URL | 页面 mux 改为 `<mount>/api/remote.mux` | `git show e546f2b:src/shim/20-transport.js` |
+| 当时的宿主不提供该路径 | `lib/index.js` 里 `host mux relay` 命中 **0** 次；`lib/remote-mux.js` 不存在；`package.json` 无 `ws` | `git show e546f2b:lib/index.js \| grep -c`、`git cat-file -e` |
+| 远端也没有该路径 | `GET <devbox>/api/remote.mux` → **404**（同 cookie 下 `/` 为 200） | `curl -o /dev/null -w '%{http_code}'` |
+| ⇒ 页面 mux 打不开 | 宿主不处理 → 按普通挂载代理到远端 → 404 → 远端挂载无法建立 | 上两行 |
+
+**为什么会踩到**：把「统一到 main」当成目标时，`main` 恰好停在「客户端已默认开 relay、宿主侧中继还没有」的中间态；按 main 检出即等于加载这个不可运行的组合。日志能区分这两种启动：
+
+| 启动 | 日志序列 |
+|---|---|
+| 错配（远端挂载加载失败） | `apply: … streams=true` → `stream mount: ok` → `shim injection: ok`（**没有** relay 行） |
+| 正确 | `apply: …` → `http mount: ok` → `orchestrator api proxy: ok` → `orchestrator stream proxy: ok` → `stream mount: ok` → **`host mux relay: ok`** → `shim injection: ok` |
+
+**修复**：
+
+1. 宿主侧中继（`lib/remote-mux.js` + `lib/index.js` 的挂载 + `ws` 依赖）与客户端改写同时存在于运行分支，`main` 快进到同时包含两端的合并提交；
+2. `scripts/preflight.sh` 增加四项守卫：`shim build matches sources`、`plugin dependency ws resolves`、`running host mounted the relay`（读**当前 PID** 的启动日志，而不是只看源码字符串）、`no second DSH host`；
+3. `docs/instance-layout.md` 明确禁止再检出到该中间态。
+
+**教训**：「统一路径/版本」的正确目标不是「所有引用都指向 main」，而是「指向一个**自身可运行**的提交」。preflight 里任何把缺陷写成 OK 条件的检查项，都会把事故变成绿灯放行。
+
+**顺带纠正一条排查陷阱**：`/tmp/dsh-remote-host-<pid>.log` 里带 `Error: spawn failed` 的行不是应用启动，而是 `npm test`（该字符串只在 `test/tunnel-retry.test.mjs` 的桩里）。排查启动问题先按有没有 `apply:` 行区分「应用启动」与「测试进程」。

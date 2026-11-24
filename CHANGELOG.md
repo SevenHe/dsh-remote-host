@@ -1,8 +1,34 @@
 # Changelog
 
-## Unreleased
+## 1.14.8 — 2026-11-24
 
+本版是「可以直接用」的稳定版：宿主与客户端两端语义一致，退出 App 重开即可正常加载远端工作区与会话。
+
+### 修复
+
+- **退出 App 重开后远端工作区/会话加载失败**（两端版本错配）：客户端自 1.14.7 起默认开启 `streamRelay`，把页面 mux URL 改写成 `<mount>/api/remote.mux`；而宿主侧中继当时只存在于分支上，`main` 没有它，于是该请求被当作普通挂载代理到远端、拿到 404，远端挂载永远建立不起来。现在宿主侧中继（`lib/remote-mux.js` + `lib/index.js` 的挂载 + `ws` 依赖）随 `main` 一起发布，`main` 本身即可运行。根因与逐条证据见 docs/regression.md 的 2026-11-24 条目。
+- **`ws` 缺失会让整个插件加载失败**：profile 用 `link:` 指向本仓库，包管理器不安装被链接包的依赖，`ws` 必须来自仓库自己的 `node_modules`。修复动作为 `npm ci`；preflight 现在直接校验它能否解析。
 - **修复远端短抖动导致的渲染进程崩溃**：mux 连接不再由插件自建，只重写 URL 交给官方连接层，连接与重连由其负责（config.streamRelay 默认开启，显式 false 可回退）。详见 docs/known-issue-short-flap-crash.md。
+
+### 新增（守卫）
+
+- `scripts/preflight.sh` 新增四项，把「文件是对的但跑的是旧代码」这类情况拦在启动前：
+  - `shim build matches sources`：`lib/shim.js` 必须等于 `src/shim/*` 的拼接结果；
+  - `plugin dependency ws resolves`：从仓库目录 `import('ws')` 必须成功；
+  - `running host mounted the relay`：读**当前宿主 PID** 的 `/tmp/dsh-remote-host-<pid>.log`，必须含 `host mux relay: ok`；
+  - `no second DSH host (dsh web)` / `no dsh web autostart`：`~/.dsh` 只允许一个宿主。
+
+### 变更
+
+- `main` 快进到同时包含客户端改写与宿主侧中继的合并提交；`docs/instance-layout.md` 改写为唯一口径，并明确禁止再检出到「客户端已开 relay、宿主没有 relay」的中间态。
+- 移除历史遗留的 launchd 任务 `com.deepseek.dsh.web`（`dsh web`，与桌面 App 共用 `~/.dsh` 的第二个宿主）；plist 备份到 `~/Workspace/dsh-app-backup/`。
+
+### 验证
+
+- 真实 App 启动日志含 `host mux relay: ok`（该行是宿主侧中继已挂载的直接证据）；
+- 同一份 renderer trace 中 `workspace-baseline` 本地/远端各 1 条、`session-snapshot` 本地与远端均出现、`failure` / `degrade-handoff` / `remote-unavailable` 均为 0；
+- `npm run check` 全绿（含 `lib/shim.js` 重建一致、哨兵 0 命中）。
+
 ## 1.14.7 — 2026-11-23
 
 ### 修复
