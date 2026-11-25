@@ -6,14 +6,7 @@
   var config = globalThis.__DSH_REMOTE_HOST__
   if (config === null || typeof config !== 'object' || typeof config.mount !== 'string') return
   var MOUNT = config.mount
-  /**
-   * How long one mux long-poll may wait before answering empty.
-   *
-   * The page that cannot open a WebSocket polls the Host pump instead; a long hold keeps
-   * the idle traffic at one request per interval while a frame still leaves immediately
-   * (a send aborts the hold).
-   */
-  var POLL_HOLD_MS = 20000
+
   /**
    * Crash-loop circuit breaker.
    *
