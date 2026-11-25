@@ -78,9 +78,11 @@ test('mount endpoint: a poll is answered from the remote mux frames', async (t) 
 
   const frames = []
   let cursor = 0
-  // The remote's first frame may arrive before or after the open edge is announced, so the
-  // page reads frames across round trips instead of expecting them in one specific answer.
-  for (let round = 0; round < 2; round += 1) {
+  // The remote's first frame may arrive before or after the open edge is announced. When the
+  // socket is already open before the pump attaches its listeners, the open edge is announced by
+  // an empty poll instead of a status frame, so the page needs another round trip. Poll until the
+  // frame shows up, exactly as the page's own loop does.
+  for (let round = 0; round < 6; round += 1) {
     const answer = await callRoute(mountRoute, 'POST', '/devbox/__dsh_remote_host__/mux-poll',
       JSON.stringify({ cursor, uplink: [], waitMs: 4000 }))
     assert.equal(answer.status, 200)
@@ -88,6 +90,7 @@ test('mount endpoint: a poll is answered from the remote mux frames', async (t) 
     assert.ok(parsed.state === 'open' || parsed.state === 'connecting', 'pump state: ' + String(parsed.state))
     cursor = parsed.cursor
     frames.push(...parsed.frames)
+    if (frames.some((frame) => JSON.parse(frame).type === 'ready')) break
   }
   const kinds = frames.map((frame) => JSON.parse(frame).type)
   assert.deepEqual(kinds, ['drh/relay-status', 'ready'], 'pump frames: ' + JSON.stringify(frames))

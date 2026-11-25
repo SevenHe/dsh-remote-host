@@ -13,16 +13,24 @@
 - **远端 `~` 从不展开**：远端命令里路径用单引号包住，`~` 不展开 —— 备份写进字面量 `~/…` 目录（还被 `2>/dev/null || true` 吞掉失败），`scp` 目标变成相对路径直接失败。改为先经 `ssh 'printf %s "$HOME"'` 解析远端 home，再用绝对路径加引号。
 - **补丁解压到包根目录而不是 `lib/`**：归档内容是 `lib/` 内的文件，却 `tar -C <包目录>` —— `lib/` 一个字节没变、补丁文件散落在包根，流程照样打印“已部署”。改为 `-C <包目录>/lib`，备份先 `mkdir -p` 子目录且失败即 `exit 1`。
 
-### 新增（远端访问）
+### 变更（打包基线：0.2.3-alpha.2）
+
+- **打包入口锁到上游 `dsh-v0.2.3-alpha.2` / `4b399c39`**：补丁文件改为 `scripts/patches/modelcatalog.patch`（2 个包共 4 个文件）。`node scripts/package-app.mjs --dry-run` 第一步就会打印 `base dsh-v0.2.3-alpha.2 (4b399c39…)`。
+- 基线仍只在 `scripts/apply-upstream-model-catalog.mjs` 的 `BASE_TAG` / `BASE_COMMIT` 定义一次，`package-app.mjs` 读取它，不重复维护版本号。
+
+### 新增（运维入口：凭证 / URL / 自检）
 
 - **`scripts/remote-access.mjs`（`npm run remote:url` / `npm run remote:cookie`）**：读远端宿主启动横幅里的入口 URL → 到 `/connect` 换出 mux/API 需要的凭证 → 写入 `cookieFile` 并备份旧文件。新版宿主的入口 token 只授权页面，凭证过期会表现为 HTTP 401、WebSocket 停在 CONNECTING；这条命令把「换凭证」从手工救火变成一行。实测：刷新后 HTTP `200`、`/api/remote.mux` 升级 `101`。
+- **`npm run remote:doctor`**：一行命令自检凭证链路（文件是否存在、字符数、远端 HTTP 状态），失败时直接打印「该跑哪条命令」。
 
-### 修复（升级到 DSH 0.2.3-alpha.2 后远端流打不开）
+### 修复（凭证模型：一条 `/connect` 凭证只够一条 WebSocket）
 
-### 新增（凭证自愈与自检）
+- **泵与代理不再共用一条凭证**：`/connect` 换出的凭证一条只授权一条 WebSocket，socket 关闭时它的 peer 被撤销、**HTTP 一起失效**。此前泵与代理读同一个 `cookieFile`，页面那条流一直开着就把代理要用的凭证花掉。现在泵拨号读独立的 `<cookieFile>.pump`（缺失时回退 `cookieFile`），代理继续用 `cookieFile`。
+- **代理遇 401 重铸并重放一次**：请求体先缓冲；401 说明凭证已被上一条 socket 用掉，于是读远端启动横幅重新换凭证并原样重放一次，仍失败才回 401，页面无需重载。
+
+### 新增（凭证自愈）
 
 - **`lib/credential-mint.js`**：经 `ssh <host>` 读远端宿主启动横幅里的入口 URL → 到 `/connect` 换出 mux/API 凭证 → 写回 `cookieFile`（旧文件备份）。宿主侧仅在配置了 `credential: { sshHost, tmuxSession }` 时启用：泵的拨号被拒（HTTP 401，多半是凭证已被上一条 socket 用掉）会刷新凭证并自动重拨一次，页面无需重载。默认关闭，不改变现有行为。
-- **`npm run remote:doctor`**：一行命令自检凭证链路（文件是否存在、字符数、远端 HTTP 状态），失败时直接打印「该跑哪条命令」。
 
 ### 修复（DSH 0.2.3-alpha：远端流改由宿主中继）
 
@@ -35,11 +43,15 @@
 
 ### 验证
 
-- **端到端一次跑通**：`node scripts/package-app.mjs` → 打补丁（4 文件）→ `pnpm install --ignore-scripts` → `pnpm run build`（10/10 gate 通过）→ `prepare:runtime` / `prepare:packages` / `prepare:dsh` → electron-builder → 挂载校验 → 落盘，退出码 0，本机缓存已热时约 6 分钟。
-- **产物**：`~/Workspace/dsh-app-build/deepseek-harness-0.2.2-rc.5-mac-arm64-unsigned.dmg`，277,194,697 字节，`sha256 369eec6bc2ab6b40141f05d292ddaee740eaf2a287c3ae22fd191475d8ffc4ab`；标记 `OwnerEntry 9` / `storeFor 23`（stock 17）。独立复算 sha256 与字节数与 `manifest.json` 一致，再跑一次 `verify` 仍为退出码 0。
-- **双向对照**：官方 `0.2.2-rc.3` dmg → `OwnerEntry 0` / `storeFor 17` → 退出码 1（被拒）；上一版本地 rc.5 dmg → `OwnerEntry 9` / `storeFor 23` → 退出码 0。
-- `npm run check`：85/85 测试通过，哨兵 99 个 tracked 文件无内部信息。
-- 口径说明：本次复用本机缓存（Electron 44 解包目录、Node 24.21.0 运行时、pnpm store，全程仅 1 个依赖包需要下载）；换到真正的冷机器，额外耗时在下载 Electron / Node 运行时 / 依赖包。
+- **打包链路**：`node scripts/package-app.mjs` 跑通（退出码 0）：打补丁（2 个包共 4 个文件）→ `pnpm install --ignore-scripts` → `pnpm run build` → `package:desktop:mac:arm64:unsigned` → 挂载校验 → 落盘；`manifest.json` 只有在第 4 步校验通过后才写出。
+- **产物**：`~/Workspace/dsh-app-build/deepseek-harness-0.2.3-alpha.2-mac-arm64-unsigned.dmg`，`279,016,992` 字节，`sha256 af9adf819242cef4f4dfac657c5ae813d723c01dc3000ff50945ebd1da7c7285`；补丁 `scripts/patches/modelcatalog.patch` 的 `sha256 feec2c9732a5f5f8c289c5c1f4c251bab3a722c8fef5dbb2787566ab9c5b69c9`；标记 `OwnerEntry 9` / `storeFor 23`（stock 17），`baseTag dsh-v0.2.3-alpha.2`、`baseCommit 4b399c39…`。
+- **判据对照**：官方基线包 `OwnerEntry 0`（stock `storeFor 17`）不满足 `OwnerEntry > 0`，会被 `verify` 以退出码 1 拒绝；本地产物 `OwnerEntry 9` 通过（退出码 0）。
+- `npm run check`：106/106 测试通过；`lib/shim.js` 与 `src/shim/*` 一致（10 个模块）；`verify-sensitive` 在 108 个 tracked 文件里 0 命中。
+- **真机验收（重启 App 之后）**：
+  - 宿主日志 `/tmp/dsh-remote-host-<pid>.log` 含 `stream mount: ok` 与 `host mux relay: ok`；开 `trace: true` 时另有 `mux-poll cursor=… uplink=…` 行；
+  - `~/.dsh/dsh-remote-host/renderer-trace.log` 里 `host-relay-status` 走到 `{"state":"open"}`、`remote-open` 的 `streams` 为 2，`workspace-baseline` / `session-snapshot` 各有 `kind: remote` 条目；
+  - 界面左侧「远端工作区 · devbox」列出远端工作区与会话，点进会话可见内容。
+- 口径说明：打包耗时差别主要在下载 Electron / Node 运行时 / 依赖包；本机缓存已热时明显更快，真正的冷机器只需多算这部分下载时间。
 
 ## 1.14.10 — 2026-11-24
 

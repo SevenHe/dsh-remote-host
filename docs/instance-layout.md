@@ -8,8 +8,8 @@
 | 项 | 值 |
 |---|---|
 | 路径 | `/Applications/DeepSeek Harness.app` |
-| 版本 | `0.2.2-rc.5`（与远端 Host 严格同版本） |
-| 必须包含客户端补丁 | `app.asar` 内 `storeFor` 命中 > 0（否则远端会话模型位会显示「请选择模型」） |
+| 版本 | `0.2.3-alpha.2`（与远端 Host 严格同版本） |
+| 必须包含客户端补丁 | `app.asar` 内补丁独有标记 `OwnerEntry` 命中 > 0（官方原版是 0；`storeFor` 官方本来就有 17，不能作判据。补丁缺失时远端会话模型位会显示「请选择模型」） |
 | 备份/残留 | 不允许出现第二个同名 `.app`；旧版放 `~/Workspace/dsh-app-backup/` |
 
 ## 2. 唯一的插件代码
@@ -33,6 +33,18 @@
 - 只有客户端改写、宿主没有中继 = 页面 mux 被代理到远端拿 404 = **远端工作区/会话加载失败**。
 
 **不要再把仓库检出到 `e546f2b` 或更早的提交**：那些提交里客户端已经默认开 relay，而宿主侧中继还只存在于分支上，属于不可运行的组合。`main` 已快进到同时包含两端的合并提交，`main` 本身即可运行。
+
+### 2.1.1 桌面 App 的三条传输腿
+
+桌面页的源是 `dsh-app://app`，从这个源出发，mux 的三条腿各有不同命运：
+
+| 腿 | 载体 | 状态 |
+|---|---|---|
+| HTTP（shim 的相对路径请求、REST） | 桌面 shell 的 `forwardWebRequest` 把请求转发给本地宿主，顺带剥掉 `origin` / `sec-fetch-site` / `cookie` 并换上宿主自己的凭证 | 通 |
+| 远端 mux 的 WebSocket | `dsh-app://app` 与宿主权威对不上，来源栅栏（`isTrustedApiRequest`）在策略之前就拒绝跨源（403）；自定义 scheme 本身也载不了 WebSocket | 不通 |
+| 远端 mux 的帧 | 宿主泵 `POST <mount>/__dsh_remote_host__/mux-poll`：请求体 `{ cursor, uplink, waitMs }`，响应带 `cursor` / `frames` / `state`，状态帧是 `drh/relay-status` | 通 |
+
+所以 shim 在自定义 scheme 下改用 `PollSocket`（`src/shim/30-streams.js`），以「cursor + uplink + 长等待」驱动同一套 mux 协议：`send` 会立即中止当前等待，上行帧不排队。能开原生 WebSocket 的页面（浏览器）仍走 `<mount>/api/remote.mux` 的字节中继。
 
 ### 2.2 依赖只在仓库里
 
@@ -129,4 +141,25 @@ node ~/Workspace/dsh-remote-host/scripts/package-app.mjs     # 补丁 → 构建
 2. `bash scripts/preflight.sh` → 必须 `PREFLIGHT OK`（App 没开时 `running host` 显示 `none`，属正常）；
 3. **退出** App（⌘Q，不是关窗口），确认进程没了：`pgrep -f "dsh-desktop-host/[l]ib/index.js"`；
 4. 重新从「应用程序」启动；
-5. 再跑一次 `bash scripts/preflight.sh`，此时 `running host mounted the relay` 必须为 `ok (pid …)`。
+5. 再跑一次 `bash scripts/preflight.sh`，此时 `running host mounted the relay` 必须为 `ok (pid …)`；
+6. 按 §11 的真机验收清单确认远端腿确实活着。
+
+## 10. 运维入口（凭证 / URL / 自检）
+
+| 命令 | 用途 |
+|---|---|
+| `npm run remote:cookie -- --ssh devbox` | 读远端宿主启动横幅 → 到 `/connect` 换凭证 → 写 `~/.dsh/dsh-remote-host/cookie.txt`（旧文件备份成 `.bak-<时间>`）；宿主重启后跑一次 |
+| `npm run remote:url -- --ssh devbox --open` | 同上，并直接打开远端宿主自己的 UI |
+| `npm run remote:doctor -- --authority devbox.example.com:3080` | 自检凭证链路：文件是否存在、字符数、远端 HTTP 状态；失败时打印该跑哪条命令 |
+
+凭证寿命、`<cookieFile>.pump`、代理 401 重铸重放与 `credential: { sshHost, tmuxSession }` 自愈配置见 [docs/packaging.md](packaging.md) 第 4 节。
+
+## 11. 真机验收清单（重启 App 之后）
+
+按 §9 退出并重开 App 后，三项都成立才算远端挂载可用：
+
+1. **宿主日志**：`/tmp/dsh-remote-host-<pid>.log`（进程设了 `DSH_HOME` 时是 `$DSH_HOME/dsh-remote-host.log`）里出现 `stream mount: ok` 与 `host mux relay: ok`；开 `trace: true` 时宿主标准输出另有 `mux-poll cursor=… uplink=…` 行。
+2. **页面 trace**：`~/.dsh/dsh-remote-host/renderer-trace.log` 里 `host-relay-status` 走到 `{"state":"open"}`、`remote-open` 的 `streams` > 0（远端腿 open）；同一文件里 `workspace-baseline` / `session-snapshot` 应各有 `{"kind":"remote"}` 条目。
+3. **界面**：左侧「远端工作区 · devbox」分组下能列出远端工作区与会话，点进会话能看到内容。
+
+前两项可以用命令行复核，第三项必须人眼看。

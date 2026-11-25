@@ -2,6 +2,8 @@
 
 本机的 App 不是"官方原版"：它带一个**上游还没有的模型目录补丁**（远端会话要按会话所属宿主取模型目录，否则远端会话永远显示「请选择模型」）。所以打包不能用官方命令直接出包，必须走本仓库的入口，并且**产物必须自证补丁在里面**。
 
+**当前锁定基线**：上游 tag `dsh-v0.2.3-alpha.2`、commit `4b399c39a6d1479cd84ca591b4d7c88e24d38a96`；补丁文件 `scripts/patches/modelcatalog.patch`，触及 2 个包共 4 个文件。基线只在 `scripts/apply-upstream-model-catalog.mjs` 的 `BASE_TAG` / `BASE_COMMIT` 定义一次，`package-app.mjs` 从那里读取，不在第二处重复维护版本号。
+
 ## 1. 一条命令
 
 ```bash
@@ -13,7 +15,7 @@ node scripts/package-app.mjs          # 等价 npm run package:app
 
 | 步 | 动作 | 失败条件 |
 |---|---|---|
-| 1/4 | 把 harness 检出到**锁定的上游版本**并打补丁（复用 `scripts/apply-upstream-model-catalog.mjs`） | 检出脏、HEAD 不是锁定 commit、补丁打不上 |
+| 1/4 | 把 harness 检出到**锁定的上游版本**（当前 `dsh-v0.2.3-alpha.2` / `4b399c39`）并打 `scripts/patches/modelcatalog.patch`（复用 `scripts/apply-upstream-model-catalog.mjs`） | 检出脏、HEAD 不是锁定 commit、补丁打不上 |
 | 2/4 | `pnpm install --ignore-scripts` → `pnpm run build`（运行时准备由第 3 步自己完成：`prepare:runtime` / `prepare:packages` / `prepare:dsh`） | 任一命令非零 |
 | 3/4 | `pnpm run package:desktop:mac:arm64:unsigned` 出 dmg | 没产出 dmg |
 | 4/4 | **挂载 dmg 校验 `app.asar` 里的补丁标记**，通过后复制到输出目录并写 `manifest.json` | 标记缺失 |
@@ -41,7 +43,7 @@ npm run verify:app -- "<dmg 路径>"
 `storeFor` 在官方包里也存在，所以它**不能**证明补丁在；只有 `OwnerEntry` 能。校验逻辑要求 `OwnerEntry > 0`（并且 `storeFor > 17` 作为加分证据），因此官方包会被拒绝：
 
 ```
-$ node scripts/package-app.mjs verify --dmg "<官方 0.2.2-rc.5 App>"
+$ node scripts/package-app.mjs verify --dmg "<官方 0.2.3-alpha.2 App>"
   OwnerEntry 0 (MISSING — stock build)
   storeFor   17 (stock has 17)
 package-app: this artifact does NOT carry the model-catalogue patch: ...
@@ -53,22 +55,37 @@ package-app: this artifact does NOT carry the model-catalogue patch: ...
 ## 3. 输出
 
 - dmg：`~/Workspace/dsh-app-build/deepseek-harness-<version>-mac-arm64-unsigned.dmg`
-- `manifest.json`：版本、上游基线 tag/commit、补丁文件 sha256、两个标记的计数、dmg 的 sha256 与字节数、构建时间
+- `manifest.json`：版本、上游基线 tag/commit、补丁文件 sha256、两个标记的计数、dmg 的 sha256 与字节数、构建时间。alpha.2 产物实测：`baseTag dsh-v0.2.3-alpha.2`、`baseCommit 4b399c39…`、`patchSha256 feec2c97…`、`OwnerEntry 9` / `storeFor 23`（stock 17）、`279,016,992` 字节 / `sha256 af9adf81…`
 
 unsigned 包首次打开需要：`xattr -dr com.apple.quarantine "<app>"`，再在「系统设置 → 隐私与安全性」里允许。
 
-## 4. 远端凭证：宿主每次重启都会换
+## 4. 远端凭证：一条凭证只够一条 WebSocket
 
-从 DSH `0.2.3-alpha` 起，宿主启动时打印的入口 URL 里的 token **只授权页面本身**；mux 与 API 要的是在 `/connect` 换出来的凭证。所以任何存下来的 cookie 都会在宿主重启后静默失效（表现为 HTTP 401 / WebSocket 停在 CONNECTING）。
+从 DSH `0.2.3-alpha` 起，宿主启动时打印的入口 URL 里的 token **只授权页面本身**；mux 与 API 要的是在 `/connect` 换出来的凭证。由此有三条硬规则：
+
+- **一条 `/connect` 凭证只够一条 WebSocket**：这条 socket 关闭时它的 peer 被撤销，**HTTP 一起失效**。所以存下来的 cookie 在宿主重启后（甚至只是那条 socket 断开后）会静默失效，表现为 HTTP 401 / WebSocket 停在 CONNECTING。
+- **泵和代理各用一条凭证**：泵用 `<cookieFile>.pump`（承载页面 mux 的那条连接），代理用 `cookieFile`。页面那条流一直开着也不会花掉代理要用的凭证；刷新其中一条不会把另一条一起打掉。
+- **代理遇 401 会重铸并重放一次**：请求体先缓冲，401 时读远端启动横幅重新换凭证，然后原样重放一次；仍失败才回 401。页面无需重载。
 
 用一条命令读宿主启动横幅、换凭证、落盘：
 
 ```bash
 npm run remote:cookie -- --ssh devbox      # 只刷新凭证（宿主重启后跑一次）
 npm run remote:url -- --ssh devbox --open  # 刷新并直接打开远端宿主自己的 UI
+npm run remote:doctor -- --authority devbox.example.com:3080  # 自检：文件、字符数、远端 HTTP 状态
 ```
 
-凭证写到 `~/.dsh/dsh-remote-host/cookie.txt`（旧文件自动备份成 `.bak-<时间>`）。宿主横幅默认从 tmux 会话 `dsh-superagent` 读，可用 `--tmux-session` 改。
+凭证写到 `~/.dsh/dsh-remote-host/cookie.txt`（旧文件自动备份成 `.bak-<时间>`）。宿主横幅默认从 tmux 会话 `dsh-superagent` 读，可用 `--tmux-session` 改。`remote:doctor` 的 `--authority` 要与插件配置里的 `authority` 一致；不给 `--authority` 时只检查本地文件，跳过远端 HTTP 探测。
+
+**凭证自愈（默认关闭）**：给插件配 `credential: { sshHost, tmuxSession }` 后，泵的拨号被拒（HTTP 401，多半是凭证已被上一条 socket 用掉）会重新换凭证并自动重拨一次，页面无需重载；代理遇 401 同样重铸重放。不配则维持旧行为。
+
+```yaml
+- id: dsh-remote-host
+  config:
+    credential:
+      sshHost: devbox
+      tmuxSession: dsh-superagent
+```
 
 ## 5. 远端宿主也要同一个补丁
 
@@ -81,15 +98,15 @@ node scripts/package-app.mjs deploy-remote --ssh <host>
 
 它会：先备份远端 runtime 里的 `dsh-api-session-controller` 与 `dsh-client-ui-model-selection`（带时间戳的 `modelcatalog-backup-*`），再从本地构建产物解包覆盖，最后打印重启命令。回滚就是 `cp -a <backup>/. <runtime>/ && 重启宿主`。
 
-## 5. 升级 DSH 版本时
+## 6. 升级 DSH 版本时
 
-1. 改 `scripts/apply-upstream-model-catalog.mjs` 里的 `BASE_TAG` / `BASE_COMMIT`，并把 `scripts/patches/modelcatalog.patch` 重新对峙到新版本；
+1. 改 `scripts/apply-upstream-model-catalog.mjs` 里的 `BASE_TAG` / `BASE_COMMIT`（当前 `dsh-v0.2.3-alpha.2` / `4b399c39`），并把 `scripts/patches/modelcatalog.patch` 重新对齐到新版本；
 2. `package-app.mjs` **从那个脚本读取锁定版本**，不需要改第二处（避免两处漂移）；
-3. `node scripts/package-app.mjs --dry-run` 确认命令序列；
+3. `node scripts/package-app.mjs --dry-run` 确认命令序列（第 1 步会打印 `base <tag> (<commit>)`）；
 4. 正式打包；
 5. `npm run verify:app -- "<新 dmg>"` 复核标记与版本。
 
-## 6. 注意事项
+## 7. 注意事项
 
 - 构建耗时较长（首次会安装依赖并全量构建）；`--skip-install` 可跳过安装；
 - 打包用的 harness 检出会被切到 detached HEAD（锁定 commit），这是故意的：packaging 不接受"随手一个分支"；
