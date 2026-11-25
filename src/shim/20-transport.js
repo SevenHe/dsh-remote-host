@@ -257,6 +257,27 @@
 
   var usingSocketFactory = false
 
+  /**
+   * Whether this page runs under a scheme that cannot carry a WebSocket.
+   *
+   * The desktop shell serves the app from a custom scheme; `new WebSocket` accepts only
+   * ws/wss/http(s) bases there, and a direct loopback socket carries an origin the Host
+   * fence refuses. Such a page drives the mux over forwarded HTTP instead.
+   * @returns true when the document scheme is neither http nor https.
+   */
+  function runsOnCustomScheme() {
+    if (typeof location !== 'object' || location === null) return false
+    var protocol = typeof location.protocol === 'string' ? location.protocol : ''
+    if (protocol === '') {
+      // A harness may expose only href; derive the scheme from it rather than guessing.
+      var href = typeof location.href === 'string' ? location.href : ''
+      var colon = href.indexOf(':')
+      if (colon <= 0) return false
+      protocol = href.slice(0, colon + 1)
+    }
+    return protocol !== 'http:' && protocol !== 'https:'
+  }
+
   function openSocket(url) {
     var factory = previous.createWebSocket
     if (typeof factory === 'function') {

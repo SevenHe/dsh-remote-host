@@ -185,7 +185,10 @@
       }
       var hostRelay = kind === 'remote' && HOST_RECONNECTS_REMOTE === true
       if (hostRelay && remoteRelayDialed) return undefined
-      var target = kind === 'local' ? localPath : mountSocketUrl(localPath, hostRelay)
+      // A desktop page cannot open a socket to the mount, so the remote leg is carried by
+      // forwarded HTTP; browsers keep the byte relay they already use.
+      var viaPoll = kind === 'remote' && runsOnCustomScheme() === true
+      var target = kind === 'local' ? localPath : (viaPoll ? MOUNT : mountSocketUrl(localPath, hostRelay))
       if (target === undefined) {
         note('leg-no-url', { kind: kind, from: localPath })
         return undefined
@@ -193,7 +196,7 @@
       var socket
       if (hostRelay) remoteRelayDialed = true
       try {
-        socket = openSocket(target)
+        socket = viaPoll === true ? new PollSocket() : openSocket(target)
       } catch (error) {
         note('leg-threw', { kind: kind, url: target, error: String(error) })
         return undefined

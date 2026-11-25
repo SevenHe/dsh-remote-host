@@ -155,7 +155,9 @@ export function createPage(options = {}) {
     setInterval: () => 0,
     clearInterval: () => {},
     queueMicrotask,
-    location: { href: 'http://localhost/', origin: 'http://localhost', pathname: '/' },
+    // A page may be served from a custom scheme (the desktop shell); a test supplies that
+    // shape here instead of the browser default.
+    location: { href: 'http://localhost/', origin: 'http://localhost', pathname: '/', ...options.location },
     document: null,
     CustomEvent: class CustomEvent {
       constructor(type, init) { this.type = type; this.detail = init?.detail }

@@ -19,15 +19,14 @@
 
 ### 修复（升级到 DSH 0.2.3-alpha.2 后远端流打不开）
 
-### 已知限制（DSH 0.2.3-alpha 上无法用受支持的扩展点把远端工作区挂进原生侧边栏）
+### 修复（DSH 0.2.3-alpha：远端流改由宿主中继）
 
-三条代码级证据，缺一不可：
+先更正一条此前的结论：**同一窗口挂载是可行的**。真正不通的只有 WebSocket 这一条传输，HTTP 一直是通的。
 
-1. **唯一的 `/api` 拦截器归网关所有**：`api-gateway` 在构造时调用 `connection.rpc.intercept('/api', …)`，而 `registerInterceptor` 对同一 channel 的第二次注册直接抛错。所以插件**无法**再像 rc.5 的 shim 那样拦截并合并原生 `session/list`。
-2. **来源信任栅栏先于路由策略**：`webserver/authorize` 里的 `isTrustedRequest` 在 `auth` 判定之前执行，要求 Origin 等于 Host authority、且拒绝 `Sec-Fetch-Site: cross-site`。桌面渲染页的源是 `dsh-app://app`（shell 内 16 处），于是插件代理的每个 `/devbox/…` 请求都是跨源 —— 实测 WS 升级与 HTTP POST 均返回 **403**，而直连远端 `/api/remote.mux` 带新凭证返回 **101**。因此 `auth: 'anonymous'` 不构成绕过（已按此更正注释）。
-3. **客户端状态里没有「第二宿主」概念**：`client-remote-connection` 解决的是“把另一个浏览器签到同一个 Host”（QR/令牌），不是把另一个 Host 的会话挂进本机侧边栏；会话存储也没有跨 Host 的归属字段。
-
-结论：把远端工作区挂进原生侧边栏需要上游增加「第二宿主」能力，或以插件自绘 UI + 自有 RPC channel 的方式重做（不再合并进原生列表）。在此之前，远端 Host 用自己的 UI 访问（`npm run remote:url -- --ssh devbox --open`）。
+- **HTTP 本来就通**：桌面 shell 的 `dsh-app://app` 协议处理器把除静态资源以外的**全部路径**转发给本地宿主（`forwardWebRequest`），并把 `origin`/`sec-fetch-site`/`cookie` 剥掉、换成宿主自己的凭证。所以 shim 的相对路径请求（`/devbox/api/…`）走的是受信通道，来源栅栏不拦。
+- **只有 WS 不通**：自定义 scheme 无法承载 WebSocket；直接连 `ws://127.0.0.1:<port>/devbox/api/remote.mux` 又带 `Origin: dsh-app://app`，被 `isTrustedApiRequest` 以 403 拒绝（实测），而直连远端 `/api/remote.mux` 带新凭证是 101。`auth: 'anonymous'` 绕不过它——栅栏在策略之前。
+- **实现**：宿主新增 `POST <mount>/__dsh_remote_host__/mux-poll`（`lib/mux-poll.js`），由宿主持有到远端的真实 mux 连接并缓存帧；页面在自定义 scheme 下改用 `PollSocket`（`src/shim/30-streams.js`）以「cursor + uplink + 长等待」驱动同一套 mux 协议（`send` 会立即中止等待，所以上行帧不排队），浏览器里仍走原生 WS 字节中继。
+- **仍未改变的一条**：网关独占了唯一的 `/api` 拦截器（第二次 `intercept('/api')` 直接抛错），所以远端会话仍不能并入原生 `session/list`，侧边栏远端段仍由插件自绘；这一条要上游支持「第二宿主」才能改。
 
 ### 验证
 
