@@ -88,12 +88,48 @@ function storeCredential(cookieFile, credential) {
   return backup
 }
 
+
+/**
+ * Check the credential chain the page depends on and print one verdict per hop.
+ * @param options - cookie file, remote authority, and the ssh hop used to re-mint.
+ * @returns Nothing; failures exit non-zero after printing what to do.
+ */
+async function doctor(options) {
+  const cookieFile = expand(argOf('cookie-file', join(homedir(), '.dsh', 'dsh-remote-host', 'cookie.txt')))
+  const authority = argOf('authority', '')
+  const problems = []
+  console.log('cookie file : ' + cookieFile)
+  if (existsSync(cookieFile) !== true) {
+    problems.push('no credential file; run: npm run remote:cookie -- --ssh ' + options.sshHost)
+  } else {
+    const credential = readFileSync(cookieFile, 'utf8').trim()
+    console.log('credential  : ' + String(credential.length) + ' chars')
+    if (authority !== '') {
+      const root = await fetch('http://' + authority + '/', { headers: { cookie: credential } })
+      console.log('remote http : ' + String(root.status))
+      if (root.status !== 200) problems.push('the remote answered ' + String(root.status) + ' for the stored credential; re-mint it')
+    } else {
+      console.log('remote http : skipped (pass --authority host:port)')
+    }
+  }
+  if (problems.length > 0) {
+    for (const problem of problems) console.error('remote-access: ' + problem)
+    process.exit(1)
+  }
+  console.log('verdict     : credential usable over HTTP; a mux socket may still be spent — the pump re-mints when configured')
+}
+
 const sshHost = argOf('ssh', 'devbox')
 const tmuxSession = argOf('tmux-session', 'dsh-superagent')
 const cookieFile = expand(argOf('cookie-file', join(homedir(), '.dsh', 'dsh-remote-host', 'cookie.txt')))
 
+if (command === 'doctor') {
+  await doctor({ sshHost })
+  process.exit(0)
+}
+
 if (command !== 'url' && command !== 'refresh-cookie') {
-  fail('unknown command: ' + command + ' (url | refresh-cookie)')
+  fail('unknown command: ' + command + ' (url | refresh-cookie | doctor)')
 }
 
 const entryUrl = readEntryUrl(sshHost, tmuxSession)
@@ -109,4 +145,3 @@ if (command === 'url' && has('open') === true) {
   execFileSync('open', [entryUrl], { stdio: 'ignore' })
   console.log('opened   : yes')
 }
-

@@ -97,3 +97,26 @@ test('mux pump: dispose closes the remote socket', () => {
   poller.dispose()
   assert.equal(remote.closed, true)
 })
+test('mux pump: a refused dial refreshes the credential and retries', async () => {
+  let refreshed = false
+  let attempts = 0
+  const poller = createMuxPoller(() => {
+    attempts += 1
+    const socket = new FakeRemote()
+    if (refreshed !== true) process.nextTick(() => socket.emit('error'))
+    else process.nextTick(() => socket.open())
+    return socket
+  }, { waitMs: 60, onUnauthorized: async () => { refreshed = true } })
+
+  // A page polls in a loop, so the test does the same: the refused dial answers, the refresh
+  // runs in the background, and a later round trip finds the replacement socket open.
+  let state = 'connecting'
+  for (let round = 0; round < 20 && state !== 'open'; round += 1) {
+    const answer = await poller.poll({ cursor: 0, waitMs: 40 })
+    state = answer.state
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  assert.equal(state, 'open')
+  assert.ok(attempts >= 2, 'the pump dialled again after the refresh: ' + String(attempts))
+  poller.dispose()
+})

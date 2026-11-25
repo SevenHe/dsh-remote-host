@@ -19,6 +19,11 @@
 
 ### 修复（升级到 DSH 0.2.3-alpha.2 后远端流打不开）
 
+### 新增（凭证自愈与自检）
+
+- **`lib/credential-mint.js`**：经 `ssh <host>` 读远端宿主启动横幅里的入口 URL → 到 `/connect` 换出 mux/API 凭证 → 写回 `cookieFile`（旧文件备份）。宿主侧仅在配置了 `credential: { sshHost, tmuxSession }` 时启用：泵的拨号被拒（HTTP 401，多半是凭证已被上一条 socket 用掉）会刷新凭证并自动重拨一次，页面无需重载。默认关闭，不改变现有行为。
+- **`npm run remote:doctor`**：一行命令自检凭证链路（文件是否存在、字符数、远端 HTTP 状态），失败时直接打印「该跑哪条命令」。
+
 ### 修复（DSH 0.2.3-alpha：远端流改由宿主中继）
 
 先更正一条此前的结论：**同一窗口挂载是可行的**。真正不通的只有 WebSocket 这一条传输，HTTP 一直是通的。
