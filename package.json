@@ -59,6 +59,8 @@
     "install-selfheal": "node scripts/install-selfheal.mjs",
     "package:app": "node scripts/package-app.mjs",
     "verify:app": "node scripts/package-app.mjs verify --dmg",
-    "deploy:model-patch": "node scripts/package-app.mjs deploy-remote"
+    "deploy:model-patch": "node scripts/package-app.mjs deploy-remote",
+    "remote:url": "node scripts/remote-access.mjs url",
+    "remote:cookie": "node scripts/remote-access.mjs refresh-cookie"
   }
 }

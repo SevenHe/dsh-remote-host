@@ -57,7 +57,20 @@ package-app: this artifact does NOT carry the model-catalogue patch: ...
 
 unsigned 包首次打开需要：`xattr -dr com.apple.quarantine "<app>"`，再在「系统设置 → 隐私与安全性」里允许。
 
-## 4. 远端宿主也要同一个补丁
+## 4. 远端凭证：宿主每次重启都会换
+
+从 DSH `0.2.3-alpha` 起，宿主启动时打印的入口 URL 里的 token **只授权页面本身**；mux 与 API 要的是在 `/connect` 换出来的凭证。所以任何存下来的 cookie 都会在宿主重启后静默失效（表现为 HTTP 401 / WebSocket 停在 CONNECTING）。
+
+用一条命令读宿主启动横幅、换凭证、落盘：
+
+```bash
+npm run remote:cookie -- --ssh devbox      # 只刷新凭证（宿主重启后跑一次）
+npm run remote:url -- --ssh devbox --open  # 刷新并直接打开远端宿主自己的 UI
+```
+
+凭证写到 `~/.dsh/dsh-remote-host/cookie.txt`（旧文件自动备份成 `.bak-<时间>`）。宿主横幅默认从 tmux 会话 `dsh-superagent` 读，可用 `--tmux-session` 改。
+
+## 5. 远端宿主也要同一个补丁
 
 App 修好只解决"本机怎么取目录"；远端 Host 若还是官方包，它会用旧签名回答，远端会话照样问「请选择模型」。所以换宿主机 / 新建 devbox 后，把同一份构建产物里的两个包装上去：
 
