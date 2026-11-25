@@ -19,7 +19,15 @@
 
 ### 修复（升级到 DSH 0.2.3-alpha.2 后远端流打不开）
 
-- **升级路由被宿主的新连接栅栏拒绝**：新版把 WebSocket 升级路由的 `auth` 从“不校验”改为默认 `required`，而渲染进程的升级请求带 `Origin: dsh-app://app`，永远不可能等于 Host authority，于是 `/devbox/api/remote.mux` 在到达中继处理器之前就被 **403** 拒掉 —— 客户端一直停在 CONNECTING，远端工作区显示红色。两条 `registerUpgrade`（stream mount 与 host mux relay）现在显式声明 `auth: 'anonymous'`，继续靠挂载自身“仅回环可达 + 携带远端凭证”的约束；旧版本忽略该字段，行为不变。
+### 已知限制（DSH 0.2.3-alpha 上无法用受支持的扩展点把远端工作区挂进原生侧边栏）
+
+三条代码级证据，缺一不可：
+
+1. **唯一的 `/api` 拦截器归网关所有**：`api-gateway` 在构造时调用 `connection.rpc.intercept('/api', …)`，而 `registerInterceptor` 对同一 channel 的第二次注册直接抛错。所以插件**无法**再像 rc.5 的 shim 那样拦截并合并原生 `session/list`。
+2. **来源信任栅栏先于路由策略**：`webserver/authorize` 里的 `isTrustedRequest` 在 `auth` 判定之前执行，要求 Origin 等于 Host authority、且拒绝 `Sec-Fetch-Site: cross-site`。桌面渲染页的源是 `dsh-app://app`（shell 内 16 处），于是插件代理的每个 `/devbox/…` 请求都是跨源 —— 实测 WS 升级与 HTTP POST 均返回 **403**，而直连远端 `/api/remote.mux` 带新凭证返回 **101**。因此 `auth: 'anonymous'` 不构成绕过（已按此更正注释）。
+3. **客户端状态里没有「第二宿主」概念**：`client-remote-connection` 解决的是“把另一个浏览器签到同一个 Host”（QR/令牌），不是把另一个 Host 的会话挂进本机侧边栏；会话存储也没有跨 Host 的归属字段。
+
+结论：把远端工作区挂进原生侧边栏需要上游增加「第二宿主」能力，或以插件自绘 UI + 自有 RPC channel 的方式重做（不再合并进原生列表）。在此之前，远端 Host 用自己的 UI 访问（`npm run remote:url -- --ssh devbox --open`）。
 
 ### 验证
 
