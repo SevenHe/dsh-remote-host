@@ -8,6 +8,11 @@
 - **已打过补丁的检出被误判成「有无关改动」**：`repoIsPatched()` 在 `packages/api/session-controller/src/index.ts` 里找补丁独有标记 `OwnerEntry`，但该标记实际落在 `packages/client/ui-model-selection/src/client/catalog.ts`（9 处）。结果是打完补丁后第二次运行必定失败，与「可重复跑」的口径矛盾。改为检查 `catalog.ts`。
 - **dmg 明明打出来了，却被判成「没产出 dmg」**：`newestDmg()` 在仓库里按 `depth > 4` 递归找 `.dmg`，而产物实际在 `apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/` 下（第 7 层）——于是构建成功、第 4 步却以「no dmg was produced」退出 1，产物既不校验也不落 manifest。现在改为读 harness 自己打印的 `DMG: <path>` 行；`newestDmg()` 只作兜底，并收窄到构建输出目录、跳过 `.app` 与 store。
 
+### 修复（deploy-remote）
+
+- **远端 `~` 从不展开**：远端命令里路径用单引号包住，`~` 不展开 —— 备份写进字面量 `~/…` 目录（还被 `2>/dev/null || true` 吞掉失败），`scp` 目标变成相对路径直接失败。改为先经 `ssh 'printf %s "$HOME"'` 解析远端 home，再用绝对路径加引号。
+- **补丁解压到包根目录而不是 `lib/`**：归档内容是 `lib/` 内的文件，却 `tar -C <包目录>` —— `lib/` 一个字节没变、补丁文件散落在包根，流程照样打印“已部署”。改为 `-C <包目录>/lib`，备份先 `mkdir -p` 子目录且失败即 `exit 1`。
+
 ### 验证
 
 - **端到端一次跑通**：`node scripts/package-app.mjs` → 打补丁（4 文件）→ `pnpm install --ignore-scripts` → `pnpm run build`（10/10 gate 通过）→ `prepare:runtime` / `prepare:packages` / `prepare:dsh` → electron-builder → 挂载校验 → 落盘，退出码 0，本机缓存已热时约 6 分钟。

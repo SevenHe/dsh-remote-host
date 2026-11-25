@@ -5,7 +5,7 @@
  *
  * Why this exists: the "a remote Session resolves its model from the Host that owns it"
  * change is not upstream, so a stock build silently loses it and remote Sessions fall back
- * to "请选择模型". The fix lives as scripts/patches/rc5-modelcatalog.patch; this script is
+ * to "请选择模型". The fix lives as scripts/patches/modelcatalog.patch; this script is
  * the only supported way to turn a checkout into a dmg, so no build can miss it and no
  * artifact ships without proof that it is in there.
  *
@@ -202,8 +202,8 @@ function packageApp() {
     version,
     baseTag: lock.tag,
     baseCommit: lock.commit,
-    patch: 'scripts/patches/rc5-modelcatalog.patch',
-    patchSha256: sha256(join(HERE, 'patches/rc5-modelcatalog.patch')),
+    patch: 'scripts/patches/modelcatalog.patch',
+    patchSha256: sha256(join(HERE, 'patches/modelcatalog.patch')),
     markers: { [MARKER]: marker, storeFor, stockStoreFor: STOCK_STOREFOR },
     dmgSha256: sha256(target),
     dmgBytes: statSync(target).size,
@@ -279,25 +279,36 @@ function deployRemote() {
     if (existsSync(item.from) !== true) fail('build output missing: ' + item.from + ' (build first)')
   }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-  const backup = remoteRuntime + '/modelcatalog-backup-' + stamp
-  console.log('== deploy the model-catalogue fix to ' + sshHost + ' ==')
-  console.log('  runtime  ' + remoteRuntime)
-  console.log('  backup   ' + backup)
   const remote = (command) => run(['ssh', ['-o', 'BatchMode=yes', '-T', sshHost, command]], { dryRun })
-  const quoted = (path) => "'" + path + "'"
-  remote('mkdir -p ' + quoted(backup) + ' && for p in ' + packages.map((item) => quoted(item.name)).join(' ') + '; do cp -a ' + quoted(remoteRuntime) + '/$p/. ' + quoted(backup) + '/$p/ 2>/dev/null || true; done && echo "package-app: backed up to ' + backup + '"')
+  // A single-quoted `~` never expands in the remote shell: the backup then copied nothing and the
+  // upload addressed a relative path, while the run still looked successful. Resolve the remote home
+  // once and quote the absolute path instead.
+  const remoteHome = dryRun ? '$HOME' : run(['ssh', ['-o', 'BatchMode=yes', '-T', sshHost, 'printf %s "$HOME"']], { capture: true }).trim()
+  if (remoteHome.length === 0) fail('could not resolve the home directory on ' + sshHost)
+  const runtimePath = remoteRuntime.startsWith('~/') ? remoteHome + remoteRuntime.slice(1) : remoteRuntime
+  const backup = runtimePath + '/modelcatalog-backup-' + stamp
+  console.log('== deploy the model-catalogue fix to ' + sshHost + ' ==')
+  console.log('  runtime  ' + runtimePath)
+  console.log('  backup   ' + backup)
+  const quoted = (path) => (path.startsWith('$HOME') ? '"' + path + '"' : "'" + path + "'")
+  const names = packages.map((item) => quoted(item.name)).join(' ')
+  remote('mkdir -p ' + quoted(backup) + ' && for p in ' + names + '; do mkdir -p ' + quoted(backup) + '/$p && cp -a ' + quoted(runtimePath) + '/$p/. ' + quoted(backup) + '/$p/ || exit 1; done && echo "package-app: backed up to ' + backup + '"')
   for (const item of packages) {
     const archive = join(mkdtempSync(join(tmpdir(), 'drh-deploy-')), item.name + '.tar.gz')
     if (dryRun !== true) {
       execFileSync('tar', ['-czf', archive, '-C', item.from, '.'])
       run(['scp', ['-o', 'BatchMode=yes', archive, sshHost + ':' + backup + '/' + item.name + '.tar.gz']], { dryRun })
-      remote('mkdir -p ' + quoted(remoteRuntime + '/' + item.name) + ' && tar -xzf ' + quoted(backup + '/' + item.name + '.tar.gz') + ' -C ' + quoted(remoteRuntime + '/' + item.name) + ' && echo "package-app: deployed ' + item.name + '"')
+      // The archive holds the contents of the package's lib/, so it extracts into lib/ rather than
+      // the package root; extracting one level up left the shipped lib/ untouched and scattered
+      // copies of the patched files beside it.
+      const libPath = runtimePath + '/' + item.name + '/lib'
+      remote('mkdir -p ' + quoted(libPath) + ' && tar -xzf ' + quoted(backup + '/' + item.name + '.tar.gz') + ' -C ' + quoted(libPath) + ' && echo "package-app: deployed ' + item.name + '"')
     }
   }
   console.log('')
   console.log('restart the Host so it loads the new packages:')
   console.log('  ssh ' + sshHost + ' "pkill -f \'dsh --profile\' || true"   # its watchdog restarts it')
-  console.log('rollback: cp -a ' + backup + '/. ' + remoteRuntime + '/ && restart the Host')
+  console.log('rollback: cp -a ' + backup + '/. ' + runtimePath + '/ && restart the Host')
 }
 
 if (command === 'verify') {

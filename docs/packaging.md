@@ -70,7 +70,7 @@ node scripts/package-app.mjs deploy-remote --ssh <host>
 
 ## 5. 升级 DSH 版本时
 
-1. 改 `scripts/apply-upstream-model-catalog.mjs` 里的 `BASE_TAG` / `BASE_COMMIT`，并把 `scripts/patches/rc5-modelcatalog.patch` 重新对峙到新版本；
+1. 改 `scripts/apply-upstream-model-catalog.mjs` 里的 `BASE_TAG` / `BASE_COMMIT`，并把 `scripts/patches/modelcatalog.patch` 重新对峙到新版本；
 2. `package-app.mjs` **从那个脚本读取锁定版本**，不需要改第二处（避免两处漂移）；
 3. `node scripts/package-app.mjs --dry-run` 确认命令序列；
 4. 正式打包；

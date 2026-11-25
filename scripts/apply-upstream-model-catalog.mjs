@@ -8,8 +8,8 @@
  * replayable artefact that modification exists only as bytes in somebody's checkout —
  * and a Host that has to be rebuilt (or a new machine) silently loses the fix.
  *
- * The patch is version-locked on purpose. It applies to tag dsh-v0.2.2-rc.5
- * (9c2670d3); the file names and helper shapes differ on other revisions, so a
+ * The patch is version-locked on purpose. It applies to tag dsh-v0.2.3-alpha.2
+ * (4b399c39); the file names and helper shapes differ on other revisions, so a
  * fuzzy apply would produce code that compiles but means something else.
  *
  *   node scripts/apply-upstream-model-catalog.mjs --repo ~/Workspace/deepseek-harness
@@ -23,10 +23,10 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const PATCH = join(HERE, 'patches', 'rc5-modelcatalog.patch')
+const PATCH = join(HERE, 'patches', 'modelcatalog.patch')
 /** The upstream revision this patch was written against. */
-const BASE_TAG = 'dsh-v0.2.2-rc.5'
-const BASE_COMMIT = '9c2670d3bce5275e0d1610272958121af87787bb'
+const BASE_TAG = 'dsh-v0.2.3-alpha.2'
+const BASE_COMMIT = '4b399c39a6d1479cd84ca591b4d7c88e24d38a96'
 
 const args = process.argv.slice(2)
 const argOf = (name, fallback) => {

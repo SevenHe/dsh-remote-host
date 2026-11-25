@@ -1,8 +1,8 @@
 diff --git a/packages/api/session-controller/src/index.ts b/packages/api/session-controller/src/index.ts
-index 6303340c..0b76e10d 100644
+index 3fb061e5..9489c920 100644
 --- a/packages/api/session-controller/src/index.ts
 +++ b/packages/api/session-controller/src/index.ts
-@@ -338,10 +338,19 @@ export class SessionController extends TypertRemoteService {
+@@ -312,10 +312,19 @@ export class SessionController extends TypertRemoteService {
  
    /**
     * Describe every currently routable model for Host-generation selectors.
