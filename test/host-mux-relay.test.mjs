@@ -70,3 +70,86 @@ test('transport loss keeps the renderer socket open and recovers each read strea
   ])
   assert.equal(browser.readyState, WebSocket.OPEN)
 })
+test('a refused handshake exchanges one credential and redials instead of going dark', { timeout: 7000 }, async (t) => {
+  // The remote admits one socket per credential, so a spent value answers 401. The relay must
+  // exchange before the retry; retrying the same value leaves the page dark until a reload.
+  const front = createServer()
+  front.__sockets = new Set()
+  front.on('connection', (socket) => {
+    front.__sockets.add(socket)
+    socket.on('close', () => front.__sockets.delete(socket))
+  })
+  const upstream = new WebSocketServer({ noServer: true })
+  const accepted = new Set()
+  let refusals = 0
+  front.on('upgrade', (req, socket, head) => {
+    if (refusals === 0) {
+      refusals += 1
+      socket.write('HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\n\r\n')
+      socket.destroy()
+      return
+    }
+    upstream.handleUpgrade(req, socket, head, (client) => {
+      // A manually emitted connection is not tracked by the server, so the test keeps its own set.
+      accepted.add(client)
+      upstream.emit('connection', client, req)
+    })
+  })
+  upstream.on('connection', (socket) => {
+    socket.on('message', (data) => {
+      const frame = JSON.parse(data.toString())
+      if (frame.type === 'open') socket.send(JSON.stringify({ type: 'item', streamId: frame.streamId, value: 'after-refresh' }))
+    })
+  })
+  front.listen(0, '127.0.0.1')
+  await once(front, 'listening')
+
+  let refreshes = 0
+  // The relay keeps its own upstream socket, which its dispose does not own: track every dial the
+  // test causes so the cleanup can end them and the file can exit.
+  const dialed = new Set()
+  let dialOpen = true
+  const relay = createRemoteMuxRelay(
+    () => {
+      if (dialOpen !== true) return undefined
+      const socket = new WebSocket('ws://127.0.0.1:' + String(front.address().port) + '/api/remote.mux')
+      dialed.add(socket)
+      socket.on('close', () => dialed.delete(socket))
+      return socket
+    },
+    { refresh: async () => { refreshes += 1 } },
+  )
+  t.after(() => {
+    dialOpen = false
+    for (const socket of dialed) socket.terminate()
+    relay.dispose()
+    for (const socket of accepted) socket.terminate()
+    for (const socket of front.__sockets ?? []) socket.destroy()
+    upstream.close()
+    front.closeAllConnections?.()
+    front.close()
+  })
+
+  const page = createServer()
+  page.on('upgrade', (req, socket, head) => relay.upgrade(req, socket, head))
+  page.listen(0, '127.0.0.1')
+  await once(page, 'listening')
+  const browser = new WebSocket('ws://127.0.0.1:' + String(page.address().port))
+  t.after(() => {
+    browser.terminate()
+    page.closeAllConnections?.()
+    page.close()
+  })
+  const events = []
+  browser.on('message', (data) => events.push(JSON.parse(data.toString())))
+  await once(browser, 'open')
+
+  browser.send(JSON.stringify({ type: 'open', streamId: 'history', endpoint: 'session/follow', payload: { args: {} } }))
+  const stop = AbortSignal.timeout(6000)
+  while (!events.some((frame) => frame.streamId === 'history' && frame.type === 'item')) {
+    await once(browser, 'message', { signal: stop })
+  }
+  assert.equal(refreshes, 1, 'one refusal exchanges exactly one credential')
+  assert.equal(events.find((frame) => frame.streamId === 'history' && frame.type === 'item').value, 'after-refresh')
+  assert.equal(browser.readyState, WebSocket.OPEN, 'the page socket survives the refusal')
+})
