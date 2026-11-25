@@ -43,8 +43,10 @@ test('mux pump: a frame reaches the page after its cursor', async () => {
   remote.deliver('b')
   const first = await pending
   assert.equal(first.state, 'open')
-  assert.deepEqual(first.frames, ['a', 'b'])
-  assert.equal(first.cursor, 2)
+  // The byte relay announces availability with a status frame; the pump mirrors it so the
+  // page's status logic reads the same signal on both transports.
+  assert.deepEqual(JSON.parse(first.frames[0]), { type: 'drh/relay-status', state: 'open' })
+  assert.deepEqual(first.frames.slice(1), ['a', 'b'])
   remote.deliver('c')
   const second = await poller.poll({ cursor: first.cursor, waitMs: 20 })
   assert.deepEqual(second.frames, ['c'])
@@ -74,7 +76,10 @@ test('mux pump: a closed remote answers the page with that state instead of hang
   remote.close()
   const answer = await pending
   assert.equal(answer.state, 'closed')
-  assert.deepEqual(answer.frames, [])
+  // A closed relay reports itself the same way the byte relay does.
+  assert.deepEqual(answer.frames.map((frame) => JSON.parse(frame)), [
+    { type: 'drh/relay-status', state: 'closed' },
+  ])
   poller.dispose()
 })
 

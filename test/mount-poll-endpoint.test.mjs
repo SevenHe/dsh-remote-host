@@ -89,5 +89,6 @@ test('mount endpoint: a poll is answered from the remote mux frames', async (t) 
     cursor = parsed.cursor
     frames.push(...parsed.frames)
   }
-  assert.deepEqual(frames, ['{"type":"ready"}'])
+  const kinds = frames.map((frame) => JSON.parse(frame).type)
+  assert.deepEqual(kinds, ['drh/relay-status', 'ready'], 'pump frames: ' + JSON.stringify(frames))
 })
