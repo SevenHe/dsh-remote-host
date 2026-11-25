@@ -66,9 +66,11 @@ test('mux pump: a closed remote answers the page with that state instead of hang
   const remote = new FakeRemote()
   const poller = createMuxPoller(() => remote, { waitMs: 200 })
   remote.open()
-  const pending = poller.poll({ cursor: 0, waitMs: 150 })
-  // The pump attaches on its first poll; a close that lands while the page waits must
-  // answer immediately instead of holding until the deadline.
+  // The open edge is announced first: the mux protocol expects the client handshake right
+  // after open, so holding the answer would make the page handshake too late.
+  const opened = await poller.poll({ cursor: 0, waitMs: 150 })
+  assert.equal(opened.state, 'open')
+  const pending = poller.poll({ cursor: opened.cursor, waitMs: 150 })
   remote.close()
   const answer = await pending
   assert.equal(answer.state, 'closed')
