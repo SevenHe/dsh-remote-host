@@ -115,6 +115,7 @@
           socket.dispatch('message', { data: frames[index] })
         }
         if (answer.state === 'closed' || answer.state === 'error' || answer.state === 'unavailable') {
+          note('mux-poll-ended', { state: answer.state })
           finish()
           return
         }
@@ -125,6 +126,7 @@
         if (closed === true) return
         if (error !== undefined && error.name === 'AbortError') { schedule(); return }
         failures += 1
+        note('mux-poll-failed', { failures: failures, error: String(error).slice(0, 120) })
         socket.dispatch('error', {})
         if (failures >= 3) { finish(); return }
         schedule()
@@ -139,4 +141,3 @@
     if (typeof this._close === 'function') this._close()
     if (typeof this.onclose === 'function') this.onclose({})
   }
-
