@@ -13,6 +13,10 @@
 - **远端 `~` 从不展开**：远端命令里路径用单引号包住，`~` 不展开 —— 备份写进字面量 `~/…` 目录（还被 `2>/dev/null || true` 吞掉失败），`scp` 目标变成相对路径直接失败。改为先经 `ssh 'printf %s "$HOME"'` 解析远端 home，再用绝对路径加引号。
 - **补丁解压到包根目录而不是 `lib/`**：归档内容是 `lib/` 内的文件，却 `tar -C <包目录>` —— `lib/` 一个字节没变、补丁文件散落在包根，流程照样打印“已部署”。改为 `-C <包目录>/lib`，备份先 `mkdir -p` 子目录且失败即 `exit 1`。
 
+### 修复（升级到 DSH 0.2.3-alpha.2 后远端流打不开）
+
+- **升级路由被宿主的新连接栅栏拒绝**：新版把 WebSocket 升级路由的 `auth` 从“不校验”改为默认 `required`，而渲染进程的升级请求带 `Origin: dsh-app://app`，永远不可能等于 Host authority，于是 `/devbox/api/remote.mux` 在到达中继处理器之前就被 **403** 拒掉 —— 客户端一直停在 CONNECTING，远端工作区显示红色。两条 `registerUpgrade`（stream mount 与 host mux relay）现在显式声明 `auth: 'anonymous'`，继续靠挂载自身“仅回环可达 + 携带远端凭证”的约束；旧版本忽略该字段，行为不变。
+
 ### 验证
 
 - **端到端一次跑通**：`node scripts/package-app.mjs` → 打补丁（4 文件）→ `pnpm install --ignore-scripts` → `pnpm run build`（10/10 gate 通过）→ `prepare:runtime` / `prepare:packages` / `prepare:dsh` → electron-builder → 挂载校验 → 落盘，退出码 0，本机缓存已热时约 6 分钟。
