@@ -2,7 +2,7 @@
 
 本机的 App 不是"官方原版"：它带一个**上游还没有的模型目录补丁**（远端会话要按会话所属宿主取模型目录，否则远端会话永远显示「请选择模型」）。所以打包不能用官方命令直接出包，必须走本仓库的入口，并且**产物必须自证补丁在里面**。
 
-**当前锁定基线**：上游 tag `dsh-v0.2.3-alpha.2`、commit `4b399c39a6d1479cd84ca591b4d7c88e24d38a96`；补丁文件 `scripts/patches/modelcatalog.patch`，触及 2 个包共 4 个文件。基线只在 `scripts/apply-upstream-model-catalog.mjs` 的 `BASE_TAG` / `BASE_COMMIT` 定义一次，`package-app.mjs` 从那里读取，不在第二处重复维护版本号。
+**当前锁定基线**：上游 tag `dsh-v0.2.3-alpha.2`、commit `4b399c39a6d1479cd84ca591b4d7c88e24d38a96`；补丁文件 `scripts/patches/modelcatalog.patch`，触及 4 个包共 6 个文件。基线只在 `scripts/apply-upstream-model-catalog.mjs` 的 `BASE_TAG` / `BASE_COMMIT` 定义一次，`package-app.mjs` 从那里读取，不在第二处重复维护版本号。
 
 ## 1. 一条命令
 

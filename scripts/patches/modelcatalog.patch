@@ -24,7 +24,7 @@ index 3fb061e5..9489c920 100644
    }
  
 diff --git a/packages/client/ui-model-selection/src/client/catalog.ts b/packages/client/ui-model-selection/src/client/catalog.ts
-index cbc92642..9a6d9a6c 100644
+index cbc92642..b2080faf 100644
 --- a/packages/client/ui-model-selection/src/client/catalog.ts
 +++ b/packages/client/ui-model-selection/src/client/catalog.ts
 @@ -1,24 +1,68 @@
@@ -106,7 +106,7 @@ index cbc92642..9a6d9a6c 100644
  
    private readonly reasoning = new Map<string, ModelProviderGroup['models'][number]['reasoning']>()
  
-@@ -31,77 +75,149 @@ export class ModelCatalogDirectory {
+@@ -31,77 +75,147 @@ export class ModelCatalogDirectory {
      return this.reasoning.get(JSON.stringify([selection.provider, selection.model]))
    }
  
@@ -154,11 +154,9 @@ index cbc92642..9a6d9a6c 100644
      })
 -    const operation = this.ctx.remote.session.modelCatalog().then((response) => {
 +    // The Session id travels with the request so a carrier fronting several Hosts routes it
-+    // to the owner; a caller without a Session keeps the Session-less shape it always had.
-+    // A single Remote parameter is passed positionally by the generated client.
-+    const issue = (arg?: SessionId) => arg === undefined
-+      ? this.ctx.remote.session.modelCatalog()
-+      : this.ctx.remote.session.modelCatalog(arg)
++    // to the owner. The argument is passed positionally even when absent: the generated client
++    // validates the argument count, and an explicit undefined encodes as no field at all.
++    const issue = (arg?: SessionId) => this.ctx.remote.session.modelCatalog(arg)
 +    // The capability probe lives INSIDE this handler, so a Host that accepts the argument
 +    // pays exactly the same number of promise turns as before; only the degrading path
 +    // re-issues the read.
@@ -334,10 +332,10 @@ index 67136d39..f8062089 100644
      const intended = projected?.next ?? catalog.value?.default
      const reasoning = intended === undefined ? undefined : this.catalog.reasoningFor(intended)
 diff --git a/packages/client/ui-model-selection/tests/catalog.client.spec.ts b/packages/client/ui-model-selection/tests/catalog.client.spec.ts
-index f800266d..bb7c3979 100644
+index f800266d..a45ad037 100644
 --- a/packages/client/ui-model-selection/tests/catalog.client.spec.ts
 +++ b/packages/client/ui-model-selection/tests/catalog.client.spec.ts
-@@ -93,3 +93,99 @@ describe('ModelCatalogDirectory', () => {
+@@ -93,3 +93,101 @@ describe('ModelCatalogDirectory', () => {
      })
    })
  })
@@ -349,7 +347,9 @@ index f800266d..bb7c3979 100644
 +    const models = vi.fn().mockResolvedValue({ ok: true, value: catalog('host') })
 +    const subject = directory(models)
 +    await subject.load()
-+    expect(models).toHaveBeenCalledWith()
++    // One positional argument every time: the generated client validates the count, and an
++    // undefined value encodes as no field, so a Host without the parameter still sees none.
++    expect(models).toHaveBeenCalledWith(undefined)
 +  })
 +
 +  it('sends the owning Session id so a multi-Host carrier can route the read', async () => {
@@ -381,7 +381,7 @@ index f800266d..bb7c3979 100644
 +    const subject = directory(models)
 +    await subject.load()
 +    await subject.load(sessionA)
-+    expect(models).toHaveBeenNthCalledWith(1)
++    expect(models).toHaveBeenNthCalledWith(1, undefined)
 +    expect(models).toHaveBeenNthCalledWith(2, sessionA)
 +    expect(subject.store.getSnapshot().value).toEqual(catalog('warm-up'))
 +    expect(subject.storeFor(sessionA).getSnapshot().value).toEqual(catalog('session-host'))
@@ -409,7 +409,7 @@ index f800266d..bb7c3979 100644
 +    const subject = directory(models)
 +    await expect(subject.load(sessionA)).resolves.toEqual(catalog('older-host'))
 +    expect(models).toHaveBeenNthCalledWith(1, sessionA)
-+    expect(models).toHaveBeenNthCalledWith(2)
++    expect(models).toHaveBeenNthCalledWith(2, undefined)
 +    expect(subject.storeFor(sessionA).getSnapshot()).toMatchObject({ status: 'ready', error: null })
 +  })
 +
@@ -424,7 +424,7 @@ index f800266d..bb7c3979 100644
 +    await subject.load(sessionA)
 +    subject.refresh()
 +    await vi.waitFor(() => { expect(models).toHaveBeenCalledTimes(3) })
-+    expect(models).toHaveBeenNthCalledWith(3)
++    expect(models).toHaveBeenNthCalledWith(3, undefined)
 +    expect(subject.storeFor(sessionA).getSnapshot()).toMatchObject({ status: 'ready' })
 +  })
 +
@@ -437,3 +437,31 @@ index f800266d..bb7c3979 100644
 +    expect(models).toHaveBeenNthCalledWith(1, sessionA)
 +  })
 +})
+diff --git a/packages/client/ui-settings-models/src/client/store.ts b/packages/client/ui-settings-models/src/client/store.ts
+index b1d5909a..46e3ba11 100644
+--- a/packages/client/ui-settings-models/src/client/store.ts
++++ b/packages/client/ui-settings-models/src/client/store.ts
+@@ -265,7 +265,8 @@ export class ModelsSettingsStore {
+       }
+     })
+     if (rows.some(row => row.entry.provider === 'deepseek-account')) {
+-      const catalog = await this.ctx.remote.session.modelCatalog()
++      // Positional undefined: the generated client counts arguments, and the field is dropped when absent.
++      const catalog = await this.ctx.remote.session.modelCatalog(undefined)
+       for (const row of rows) {
+         if (row.entry.provider === 'deepseek-account') row.accountAvailable = catalog.ok
+           && catalog.value.groups.some(group => group.id === 'deepseek-account' && group.models.length > 0)
+diff --git a/packages/client/ui-settings-subagent/src/client/subagent-model-selection-card-controller.ts b/packages/client/ui-settings-subagent/src/client/subagent-model-selection-card-controller.ts
+index 8be02346..85a1d972 100644
+--- a/packages/client/ui-settings-subagent/src/client/subagent-model-selection-card-controller.ts
++++ b/packages/client/ui-settings-subagent/src/client/subagent-model-selection-card-controller.ts
+@@ -318,7 +318,8 @@ export class SubagentModelSelectionCardController {
+     this.catalogStatus = 'loading'
+     this.catalogPartial = false
+     this.publish()
+-    const response = await this.ctx.remote.session.modelCatalog()
++    // Positional undefined: the generated client counts arguments, and the field is dropped when absent.
++    const response = await this.ctx.remote.session.modelCatalog(undefined)
+     if (generation !== this.catalogGeneration) return
+     if (response.ok) {
+       this.catalogGroups = response.value.groups

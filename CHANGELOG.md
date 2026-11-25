@@ -2,6 +2,12 @@
 
 ## 未发布
 
+### 修复（模型目录补丁：客户端参数个数校验）
+
+- **每次加载都留一条 `client api: session/modelCatalog expected 1 argument(s), got 0`**：补丁给宿主方法加了可选的 `sessionId`，而生成的客户端按声明的参数**个数**校验，于是「没有 Session」的读取（0 参）在客户端本地就被拒 —— 请求根本没发出去，只留下一条 rejection。补丁内三处 Session-less 调用改为显式传一个位置参数：`undefined` 在编码时被丢弃，线上仍是「无 `sessionId` 字段」，老宿主行为不变；对应的客户端 spec 断言同步改为 `(undefined)`。
+- 覆盖范围由 2 个包 4 个文件扩到 **4 个包 6 个文件**（新增 `ui-settings-models` 与 `ui-settings-subagent` 的调用点）。
+- 验证：`ui-model-selection/tests/catalog.client.spec.ts` 12/12 通过；`ui-settings-models` + `ui-settings-subagent` + `api/session-controller` 合计 **69 文件 / 1690 例**全部通过。
+
 ### 修复
 
 - **`package-app.mjs` 在干净机器上跑不通**：第 2 步调了 `pnpm run prepare:desktop`。那是发布用的 `--prepare-only` 模式，读 `apps/desktop/.env.macos`（Git 忽略的本机发布配置）并在缺失时直接报错；而本机 unsigned 打包既没有也不需要这份配置——真正的打包步骤（`package:desktop:mac:arm64:unsigned`）自己会跑 `build --profile local`、pack、`prepare:runtime`、`prepare:packages`、`prepare:dsh`。移除这一冗余步骤。
@@ -15,7 +21,7 @@
 
 ### 变更（打包基线：0.2.3-alpha.2）
 
-- **打包入口锁到上游 `dsh-v0.2.3-alpha.2` / `4b399c39`**：补丁文件改为 `scripts/patches/modelcatalog.patch`（2 个包共 4 个文件）。`node scripts/package-app.mjs --dry-run` 第一步就会打印 `base dsh-v0.2.3-alpha.2 (4b399c39…)`。
+- **打包入口锁到上游 `dsh-v0.2.3-alpha.2` / `4b399c39`**：补丁文件改为 `scripts/patches/modelcatalog.patch`（4 个包共 6 个文件）。`node scripts/package-app.mjs --dry-run` 第一步就会打印 `base dsh-v0.2.3-alpha.2 (4b399c39…)`。
 - 基线仍只在 `scripts/apply-upstream-model-catalog.mjs` 的 `BASE_TAG` / `BASE_COMMIT` 定义一次，`package-app.mjs` 读取它，不重复维护版本号。
 
 ### 新增（运维入口：凭证 / URL / 自检）
@@ -43,7 +49,7 @@
 
 ### 验证
 
-- **打包链路**：`node scripts/package-app.mjs` 跑通（退出码 0）：打补丁（2 个包共 4 个文件）→ `pnpm install --ignore-scripts` → `pnpm run build` → `package:desktop:mac:arm64:unsigned` → 挂载校验 → 落盘；`manifest.json` 只有在第 4 步校验通过后才写出。
+- **打包链路**：`node scripts/package-app.mjs` 跑通（退出码 0）：打补丁（4 个包共 6 个文件）→ `pnpm install --ignore-scripts` → `pnpm run build` → `package:desktop:mac:arm64:unsigned` → 挂载校验 → 落盘；`manifest.json` 只有在第 4 步校验通过后才写出。
 - **产物**：`~/Workspace/dsh-app-build/deepseek-harness-0.2.3-alpha.2-mac-arm64-unsigned.dmg`，`279,016,992` 字节，`sha256 af9adf819242cef4f4dfac657c5ae813d723c01dc3000ff50945ebd1da7c7285`；补丁 `scripts/patches/modelcatalog.patch` 的 `sha256 feec2c9732a5f5f8c289c5c1f4c251bab3a722c8fef5dbb2787566ab9c5b69c9`；标记 `OwnerEntry 9` / `storeFor 23`（stock 17），`baseTag dsh-v0.2.3-alpha.2`、`baseCommit 4b399c39…`。
 - **判据对照**：官方基线包 `OwnerEntry 0`（stock `storeFor 17`）不满足 `OwnerEntry > 0`，会被 `verify` 以退出码 1 拒绝；本地产物 `OwnerEntry 9` 通过（退出码 0）。
 - `npm run check`：106/106 测试通过；`lib/shim.js` 与 `src/shim/*` 一致（10 个模块）；`verify-sensitive` 在 108 个 tracked 文件里 0 命中。
