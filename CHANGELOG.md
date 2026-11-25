@@ -1,5 +1,21 @@
 # Changelog
 
+## 未发布
+
+### 修复
+
+- **`package-app.mjs` 在干净机器上跑不通**：第 2 步调了 `pnpm run prepare:desktop`。那是发布用的 `--prepare-only` 模式，读 `apps/desktop/.env.macos`（Git 忽略的本机发布配置）并在缺失时直接报错；而本机 unsigned 打包既没有也不需要这份配置——真正的打包步骤（`package:desktop:mac:arm64:unsigned`）自己会跑 `build --profile local`、pack、`prepare:runtime`、`prepare:packages`、`prepare:dsh`。移除这一冗余步骤。
+- **已打过补丁的检出被误判成「有无关改动」**：`repoIsPatched()` 在 `packages/api/session-controller/src/index.ts` 里找补丁独有标记 `OwnerEntry`，但该标记实际落在 `packages/client/ui-model-selection/src/client/catalog.ts`（9 处）。结果是打完补丁后第二次运行必定失败，与「可重复跑」的口径矛盾。改为检查 `catalog.ts`。
+- **dmg 明明打出来了，却被判成「没产出 dmg」**：`newestDmg()` 在仓库里按 `depth > 4` 递归找 `.dmg`，而产物实际在 `apps/desktop/.desktop-build/targets/mac-arm64/unsigned-artifacts/` 下（第 7 层）——于是构建成功、第 4 步却以「no dmg was produced」退出 1，产物既不校验也不落 manifest。现在改为读 harness 自己打印的 `DMG: <path>` 行；`newestDmg()` 只作兜底，并收窄到构建输出目录、跳过 `.app` 与 store。
+
+### 验证
+
+- **端到端一次跑通**：`node scripts/package-app.mjs` → 打补丁（4 文件）→ `pnpm install --ignore-scripts` → `pnpm run build`（10/10 gate 通过）→ `prepare:runtime` / `prepare:packages` / `prepare:dsh` → electron-builder → 挂载校验 → 落盘，退出码 0，本机缓存已热时约 6 分钟。
+- **产物**：`~/Workspace/dsh-app-build/deepseek-harness-0.2.2-rc.5-mac-arm64-unsigned.dmg`，277,194,697 字节，`sha256 369eec6bc2ab6b40141f05d292ddaee740eaf2a287c3ae22fd191475d8ffc4ab`；标记 `OwnerEntry 9` / `storeFor 23`（stock 17）。独立复算 sha256 与字节数与 `manifest.json` 一致，再跑一次 `verify` 仍为退出码 0。
+- **双向对照**：官方 `0.2.2-rc.3` dmg → `OwnerEntry 0` / `storeFor 17` → 退出码 1（被拒）；上一版本地 rc.5 dmg → `OwnerEntry 9` / `storeFor 23` → 退出码 0。
+- `npm run check`：85/85 测试通过，哨兵 99 个 tracked 文件无内部信息。
+- 口径说明：本次复用本机缓存（Electron 44 解包目录、Node 24.21.0 运行时、pnpm store，全程仅 1 个依赖包需要下载）；换到真正的冷机器，额外耗时在下载 Electron / Node 运行时 / 依赖包。
+
 ## 1.14.10 — 2026-11-24
 
 ### 修复

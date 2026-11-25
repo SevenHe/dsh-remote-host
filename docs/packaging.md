@@ -14,7 +14,7 @@ node scripts/package-app.mjs          # 等价 npm run package:app
 | 步 | 动作 | 失败条件 |
 |---|---|---|
 | 1/4 | 把 harness 检出到**锁定的上游版本**并打补丁（复用 `scripts/apply-upstream-model-catalog.mjs`） | 检出脏、HEAD 不是锁定 commit、补丁打不上 |
-| 2/4 | `pnpm install --ignore-scripts` → `pnpm run build` → `pnpm run prepare:desktop` | 任一命令非零 |
+| 2/4 | `pnpm install --ignore-scripts` → `pnpm run build`（运行时准备由第 3 步自己完成：`prepare:runtime` / `prepare:packages` / `prepare:dsh`） | 任一命令非零 |
 | 3/4 | `pnpm run package:desktop:mac:arm64:unsigned` 出 dmg | 没产出 dmg |
 | 4/4 | **挂载 dmg 校验 `app.asar` 里的补丁标记**，通过后复制到输出目录并写 `manifest.json` | 标记缺失 |
 

@@ -61,7 +61,11 @@ function run(argv, options = {}) {
     return ''
   }
   console.log('  $ ' + printable)
-  return execFileSync(flat[0], flat.slice(1), { cwd: options.cwd, encoding: 'utf8', stdio: options.capture === true ? 'pipe' : 'inherit' })
+  if (options.capture !== true) return execFileSync(flat[0], flat.slice(1), { cwd: options.cwd, encoding: 'utf8', stdio: 'inherit' })
+  // Captured stdout is echoed afterwards; stderr stays a live stream so failures show as they happen.
+  const output = execFileSync(flat[0], flat.slice(1), { cwd: options.cwd, encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'], maxBuffer: 64 * 1024 * 1024 })
+  process.stdout.write(output)
+  return output
 }
 
 /** Count binary occurrences without pulling the whole 200 MB asar into a string. */
@@ -140,9 +144,10 @@ function verify(target, { quiet = false } = {}) {
   }
 }
 
+/** The patch's own replay guard keys on the client catalogue, which is where the marker lives. */
 function repoIsPatched(repo) {
-  return existsSync(join(repo, 'packages/api/session-controller/src/index.ts')) &&
-    readFileSync(join(repo, 'packages/api/session-controller/src/index.ts'), 'utf8').includes(MARKER)
+  const catalogue = join(repo, 'packages/client/ui-model-selection/src/client/catalog.ts')
+  return existsSync(catalogue) && readFileSync(catalogue, 'utf8').includes(MARKER)
 }
 
 function packageApp() {
@@ -170,10 +175,13 @@ function packageApp() {
   console.log('== 2/4 build ==')
   if (skipInstall !== true) run(['pnpm', ['install', '--ignore-scripts']], { cwd: repo, dryRun })
   run(['pnpm', ['run', 'build']], { cwd: repo, dryRun })
-  run(['pnpm', ['run', 'prepare:desktop']], { cwd: repo, dryRun })
+  // The packaging step below prepares the runtime itself: `build --profile local`, pack,
+  // prepare:runtime, prepare:packages and prepare:dsh. `prepare:desktop` is the release
+  // `--prepare-only` mode instead: it reads apps/desktop/.env.macos release settings and
+  // refuses to run without that file, which a local unsigned build neither has nor needs.
 
   console.log('== 3/4 package (unsigned dmg) ==')
-  run(['pnpm', ['run', 'package:desktop:mac:arm64:unsigned']], { cwd: repo, dryRun })
+  const packOutput = run(['pnpm', ['run', 'package:desktop:mac:arm64:unsigned']], { cwd: repo, dryRun, capture: true })
 
   if (dryRun) {
     console.log('')
@@ -182,7 +190,7 @@ function packageApp() {
   }
 
   console.log('== 4/4 verify the artifact, then publish it to ' + outDir + ' ==')
-  const produced = newestDmg(repo)
+  const produced = dmgFromOutput(packOutput) ?? newestDmg(repo)
   if (produced === undefined) fail('no dmg was produced under ' + repo)
   const { version, marker, storeFor } = verify(produced)
   mkdirSync(outDir, { recursive: true })
@@ -212,19 +220,44 @@ function packageApp() {
   console.log('  node scripts/package-app.mjs deploy-remote --ssh <host>')
 }
 
-/** The dmg electron-builder just wrote, whatever directory it chose. */
+/**
+ * The artifact this run just wrote: the harness prints `DMG: <path>` for exactly this purpose
+ * when a macOS packaging step succeeds, which is more reliable than searching the build tree.
+ * @param output - Captured stdout of the packaging command.
+ * @returns The existing dmg path, or undefined when the line is absent or stale.
+ */
+function dmgFromOutput(output) {
+  const match = /^DMG: (.+)$/mu.exec(output)
+  if (match === null) return undefined
+  const path = match[1].trim()
+  return existsSync(path) ? path : undefined
+}
+
+/**
+ * Fallback when no `DMG:` line was printed: scan the desktop build output directories.
+ * The scan stays shallow and skips bundle and store directories, because the packaging tree
+ * holds a full Electron app and a pnpm store, and the dmg sits at a fixed shallow depth.
+ * @param repo - Harness checkout root.
+ * @returns The newest dmg path, or undefined when none exists.
+ */
 function newestDmg(repo) {
+  const roots = [
+    join(repo, 'apps/desktop/.desktop-build/targets'),
+    join(repo, 'apps/desktop/dist'),
+    join(repo, 'apps/desktop/release'),
+  ]
   const found = []
   const walk = (dir, depth) => {
-    if (depth > 4) return
+    if (depth > 2 || existsSync(dir) !== true) return
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === 'node_modules' || entry.name === '.git') continue
       const path = join(dir, entry.name)
-      if (entry.isDirectory()) walk(path, depth + 1)
-      else if (entry.name.endsWith('.dmg')) found.push({ path, at: statSync(path).mtimeMs })
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.git' || entry.name.endsWith('.app')) continue
+        walk(path, depth + 1)
+      } else if (entry.name.endsWith('.dmg')) found.push({ path, at: statSync(path).mtimeMs })
     }
   }
-  walk(repo, 0)
+  for (const root of roots) walk(root, 0)
   found.sort((left, right) => right.at - left.at)
   return found[0]?.path
 }
