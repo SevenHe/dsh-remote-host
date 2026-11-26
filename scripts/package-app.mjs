@@ -244,6 +244,11 @@ function packageApp() {
   console.log('bytes    : ' + manifest.dmgBytes)
   console.log('sha256   : ' + manifest.dmgSha256)
   console.log('manifest : ' + join(outDir, 'manifest.json'))
+  // The build applies the patches in place and does not revert them, so say so: a checkout
+  // left dirty is easy to mistake for a local edit on the next run.
+  console.log('') 
+  console.log('checkout : ' + repo + ' is left patched at ' + lock.baseCommit)
+  console.log('           restore with: git -C ' + repo + ' reset --hard ' + lock.baseCommit)
   console.log('')
   console.log('the remote Host needs the same fix; deploy it with:')
   console.log('  node scripts/package-app.mjs deploy-remote --ssh <host>')
