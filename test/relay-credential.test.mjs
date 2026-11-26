@@ -45,6 +45,21 @@ function fakeSocket() {
 
 const upgradeRequest = (path) => ({ url: path, method: 'GET', headers: { upgrade: 'websocket', connection: 'Upgrade' } })
 
+/**
+ * Wait until `predicate` holds. The relay re-dials after an asynchronous credential exchange, so a
+ * fixed sleep races a slow CI runner; polling keeps the assertion about behaviour, not timing.
+ * @param predicate - condition to observe.
+ * @param what - description used in the timeout message.
+ */
+async function waitFor(predicate, what) {
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  throw new Error('timed out waiting for ' + what)
+}
+
 test('relay upgrade dials with its own credential, not the proxies one', async (t) => {
   const { server, seen, stop } = upstream(() => 'accept')
   server.listen(0, '127.0.0.1')
@@ -57,7 +72,7 @@ test('relay upgrade dials with its own credential, not the proxies one', async (
   writeFileSync(relayFile, 'relay-credential')
   const dial = { hostname: '127.0.0.1', port: server.address().port, blocked: false }
   proxyUpgrade(upgradeRequest('/api/remote.mux'), fakeSocket(), Buffer.alloc(0), dial, '127.0.0.1:' + String(dial.port), proxyFile, { relayFile })
-  await new Promise((resolve) => setTimeout(resolve, 150))
+  await waitFor(() => seen.length === 1, 'the first dial')
   assert.deepEqual(seen, ['relay-credential'])
 })
 
@@ -76,7 +91,7 @@ test('a relay credential that was never minted is exchanged before the dial', as
     relayFile,
     refresh: async () => { refreshes += 1; writeFileSync(relayFile, 'fresh-relay') },
   })
-  await new Promise((resolve) => setTimeout(resolve, 200))
+  await waitFor(() => seen.length === 1, 'the dial after the exchange')
   assert.equal(refreshes, 1)
   assert.deepEqual(seen, ['fresh-relay'])
 })
@@ -98,8 +113,8 @@ test('a 401 on the relay leg exchanges a credential and dials again', async (t) 
     relayFile,
     refresh: async () => { refreshes += 1; writeFileSync(relayFile, 'fresh-relay') },
   })
-  await new Promise((resolve) => setTimeout(resolve, 250))
+  await waitFor(() => seen.length === 2, 'the retry dial after the 401')
   assert.equal(refreshes, 1)
   assert.deepEqual(seen, ['spent-relay', 'fresh-relay'])
-  assert.ok(socket.written.some((line) => line.includes('101')), 'the page sees the retried upgrade: ' + JSON.stringify(socket.written))
+  await waitFor(() => socket.written.some((line) => line.includes('101')), 'the page to see the retried upgrade')
 })
