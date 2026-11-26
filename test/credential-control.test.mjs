@@ -31,7 +31,13 @@ test('credential mint: the mint joins the control socket the forward opens for t
   const hostAt = args.indexOf('devbox')
   assert.deepEqual(args.slice(hostAt - forward.length, hostAt), forward, 'the mint appends exactly the forward options, in order')
   assert.equal(args.includes('ControlMaster=auto'), true, 'the first caller may create the master, later ones reuse it')
-  assert.equal(args.includes('ControlPersist=no'), true, 'a mint must not outlive the forward')
+  // Persistence is bounded, not absent: a mint that arrives while the forward is down may
+  // still reuse the master, and neither may leave one behind for good.
+  const persist = args.find((value) => String(value).startsWith('ControlPersist='))
+  assert.equal(typeof persist, 'string', 'the mint carries a persistence window: ' + JSON.stringify(args))
+  const seconds = persist.slice('ControlPersist='.length)
+  assert.match(seconds, /^[0-9]+$/, 'the window is a number of seconds, never "yes"')
+  assert.ok(Number(seconds) > 0 && Number(seconds) <= 3600, 'the window is bounded: ' + seconds)
 })
 
 test('credential mint: cleanup addresses the socket the mint joined', () => {

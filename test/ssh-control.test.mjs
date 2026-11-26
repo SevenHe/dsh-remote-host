@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
-  controlArgs, controlPathFor, DEFAULT_CONTROL_DIR, ensureControlDir, exitArgs,
+  controlArgs, controlPathFor, DEFAULT_CONTROL_DIR, DEFAULT_PERSIST_SEC, ensureControlDir, exitArgs, sweepControlSocket,
 } from '../lib/ssh-control.js'
 
 test('control: the socket name is derived from the host, and stays inside the directory', () => {
@@ -27,12 +27,35 @@ test('control: a long alias is truncated, so the socket path stays under the pla
   assert.ok(DEFAULT_CONTROL_DIR.length < 40, 'default directory leaves no room for the name')
 })
 
-test('control: the join options name the socket and let the master die with its client', () => {
+test('control: the join options name the socket and bound how long the master outlives its client', () => {
   assert.deepEqual(controlArgs({ enabled: true, dir: '/tmp/drh', host: 'devbox' }), [
     '-o', 'ControlMaster=auto',
     '-o', 'ControlPath=/tmp/drh/cm-devbox',
-    '-o', 'ControlPersist=no',
+    '-o', 'ControlPersist=' + String(DEFAULT_PERSIST_SEC),
   ])
+})
+
+test('control: the persistence window is the caller\'s to set, and zero restores the old lifetime', () => {
+  const persist = (persistSec) => controlArgs({ enabled: true, dir: '/tmp/drh', host: 'devbox', persistSec }).slice(-1)[0]
+  assert.equal(persist(0), 'ControlPersist=no', 'a zero window keeps the master tied to its client')
+  assert.equal(persist(45), 'ControlPersist=45', 'a reconnect inside the window reuses the session')
+  // A fractional or negative value must not reach ssh as a malformed option.
+  assert.equal(persist(-5), 'ControlPersist=' + String(DEFAULT_PERSIST_SEC))
+  assert.equal(persist(1.9), 'ControlPersist=1')
+})
+
+test('control: a socket whose master is gone is cleared before the next master claims the path', () => {
+  const removed = []
+  const remove = (path) => { removed.push(path) }
+  const exists = () => true
+  assert.equal(sweepControlSocket({ path: '/tmp/drh/cm-devbox', alive: true, exists, remove }), 'kept')
+  assert.deepEqual(removed, [], 'a live master keeps its socket')
+  assert.equal(sweepControlSocket({ path: '/tmp/drh/cm-devbox', alive: false, exists, remove }), 'removed')
+  assert.deepEqual(removed, ['/tmp/drh/cm-devbox'], 'a corpse is cleared exactly once')
+  assert.equal(sweepControlSocket({ path: '/tmp/drh/cm-devbox', alive: false, exists: () => false, remove }), 'absent')
+  // A socket that cannot be removed is reported rather than silently treated as cleared.
+  assert.equal(sweepControlSocket({ path: '/tmp/drh/cm-devbox', alive: false, exists, remove: () => { throw new Error('EBUSY') } }), 'stuck')
+  assert.equal(sweepControlSocket({}), 'absent')
 })
 
 test('control: disabled means no options at all, so the argv is the pre-existing one', () => {

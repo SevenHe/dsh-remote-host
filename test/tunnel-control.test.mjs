@@ -221,3 +221,51 @@ test('forward: an attempt whose port never answers still resolves with a reason'
     rmSync(root, { recursive: true, force: true })
   }
 })
+/** Drive one attempt that comes up, recording whether the stale socket was still there at spawn. */
+async function attemptWithSocket(dir, host, probe) {
+  const socket = join(dir, 'cm-' + host)
+  const seen = { existedAtSpawn: undefined, pid: undefined }
+  const child = tunnelChild()
+  const result = await attemptSshTunnel(host, '127.0.0.1', 3080, 41700, undefined, {
+    control: { enabled: true, dir, probe },
+    spawn: () => {
+      // The sweep must have run BEFORE ssh claims the path, or ssh would inherit a corpse.
+      seen.existedAtSpawn = existsSync(socket)
+      return child
+    },
+    probeLoopback: () => Promise.resolve(true),
+    probeTunnel: () => Promise.resolve(true),
+  })
+  return { result, seen, socket }
+}
+
+test('forward: a socket left by a crashed master is cleared before ssh claims the path', async () => {
+  const root = socketRoot()
+  const dir = join(root, 'sockets')
+  const host = 'devbox-stale'
+  try {
+    // A crashed Host leaves the file behind; nothing answers on it.
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'cm-' + host), '')
+    const { result, seen, socket } = await attemptWithSocket(dir, host, () => Promise.resolve(false))
+    assert.equal(result.ok, true, 'the attempt still comes up')
+    assert.equal(seen.existedAtSpawn, false, 'the corpse must be gone before the spawn')
+    assert.equal(existsSync(socket), false)
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+test('forward: a socket whose master still answers is left alone, because that is the reuse', async () => {
+  const root = socketRoot()
+  const dir = join(root, 'sockets')
+  const host = 'devbox-live'
+  try {
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'cm-' + host), '')
+    const { result, seen, socket } = await attemptWithSocket(dir, host, () => Promise.resolve(true))
+    assert.equal(result.ok, true)
+    assert.equal(seen.existedAtSpawn, true, 'a live master keeps its socket')
+    assert.equal(existsSync(socket), true, 'and the reconnect joins it instead of re-authenticating')
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})

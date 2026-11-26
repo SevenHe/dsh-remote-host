@@ -353,6 +353,7 @@ The profile patch (`~/.dsh/profiles/<profile>/cordis.patch.yml`) carries the mou
 | `sshRemoteHost`, `sshRemotePort` | what the tunnel dials on the far side (defaults: `127.0.0.1`, the upstream port) |
 | `sshControl` | multiplex the plugin's ssh calls onto one OpenSSH master (default `true`); `false` restores one connection per call |
 | `controlDir` | where that master's control socket lives (default `/tmp/drh-ssh-<uid>`, created 0700) |
+| `controlPersistSec` | how long the master outlives its client, so a reconnect reuses the authenticated session (default `120`; `0` ties the master to the tunnel) |
 
 Remote sessions are filtered by `windowDays` and folded into a single `devbox` group
 by default, so a devbox with dozens of projects contributes one readable group

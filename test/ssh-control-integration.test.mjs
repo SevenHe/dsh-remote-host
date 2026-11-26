@@ -246,7 +246,12 @@ test('ssh control: one master carries the shared control options', { timeout: 10
     assert.equal(typeof socket, 'string', 'the forward carries a control socket path' + shown)
     assert.equal(socket, controlPathFor(world.controlDir, HOST), 'the socket is the deterministic path for this host' + shown)
     assert.equal(dirname(socket), world.controlDir, 'the socket lives in the plugin control directory' + shown)
-    assert.equal(optionValue(argv, 'ControlPersist'), 'no', 'the master must not outlive its client' + shown)
+    // Persistence is deliberate and BOUNDED: the master must survive long enough for a
+    // reconnect to reuse the authenticated session, and no longer.
+    const persist = optionValue(argv, 'ControlPersist')
+    assert.match(String(persist), /^[0-9]+$/, 'the master persists for a configured number of seconds' + shown)
+    assert.ok(Number(persist) > 0, 'a zero window would defeat the point: reuse on reconnect' + shown)
+    assert.ok(Number(persist) <= 3600, 'an unbounded window would leave a master behind for good' + shown)
   } finally {
     await cleanup(world, dispose)
   }

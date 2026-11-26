@@ -10,7 +10,9 @@
 - **清理**：`killTunnel(child, control)` 先发 `ssh -O exit`（独立短命子进程、1s 上限、失败只记日志），再走原有的 SIGTERM→250ms→SIGKILL 进程组升级；顺序与「不等待」都保持，转发端口仍在同一 tick 释放。
 - **实测（真实 devbox，独立于被测代码的 bash/python 探针）**：`ssh -O check` 回 `Master running (pid=…)`；socket 权限 `srw-------`（目录 0700）；经 master 执行远端命令 0.09s；`ssh -O exit` → `Exit request sent.` → socket 消失、master 进程消失。
 - **独立黑盒验证**：`test/ssh-control-integration.test.mjs` 用「假 ssh 放 PATH 首位」的方式黑盒跑真实链路，5/5 通过，并验证了**敏感性**（接线落地前同一 harness 观察到全红；把 `ControlPersist` 期望改成 `yes` 会失败）。记录到的 argv 恰好 3 条：转发（含 `-L`）、mint（同一 `ControlPath`）、`-O exit`；禁用时 2 条且零 control 选项、不建 socket。
-- **回归**：`npm run check` **206/206**；新增 4 个测试文件共 31 例（`ssh-control` 8、`credential-control` 10、`tunnel-control` 8、`ssh-control-integration` 5）；既有 `ssh-mode`/`tunnel-retry`/`tunnel-forward` 口径不变。四个新测试文件运行后临时目录增量为 0。
+- **断线重连也免认证（master 常驻）**：`ControlPersist` 不再固定为 `no`，改为可配置窗口 `controlPersistSec`（默认 **120s**）。实测（真实 devbox）：杀掉隧道客户端后 master 仍然存活（`Master running (pid=85331)`），经由它的重连 **122ms**（202/122/105）vs 全新握手 **832ms**（869/791/832）——**每次重连省 710ms**。
+- **崩溃兜底（双保险）**：① 正常退出仍先发 `ssh -O exit`（已测：master 与 socket 一起消失）；② 宿主被 `SIGKILL` 之类无法优雅退出时，master 只在窗口内残留，实测 5s 窗口后自动消失、socket 一并清掉；③ 下次建 master 前先 sweep：socket 文件存在但 `ssh -O check` 不答（上次崩溃的遗骸）→ 先删除再由 ssh 接管，避免 "Control socket connect" 卡死。实测：`SIGKILL` 后 1s master 仍在（正是复用的前提），窗口过后 master 与 socket 均消失。
+- **回归**：`npm run check` **206/206**；新增 4 个测试文件（`ssh-control` 10、`credential-control` 10、`tunnel-control` 10、`ssh-control-integration` 5），覆盖常驻窗口的取值口径、崩溃遗骸的清理顺序（必须在 spawn 之前）、以及"活着的 master 不被动"；既有 `ssh-mode`/`tunnel-retry`/`tunnel-forward` 口径不变。四个新测试文件运行后临时目录增量为 0。
 
 ### 修复（SSH 隧道：一条长连接，探测不再重建端口）
 
