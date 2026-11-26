@@ -134,8 +134,14 @@ after(() => {
   if (fakeSshDir !== '') rmSync(fakeSshDir, { recursive: true, force: true })
 })
 
-/** Poll until probe answers truthy; a hard deadline keeps a stuck case from hanging. */
-async function waitFor(label, probe, timeoutMs = 3000) {
+/**
+ * Poll until probe answers truthy; a hard deadline keeps a stuck case from hanging.
+ *
+ * Eight seconds, not three: every wait here races a spawned stand-in ssh plus a real port bind,
+ * and under parallel suite load (or on a busy machine) three seconds turned a passing case into
+ * a flake rather than a failure.
+ */
+async function waitFor(label, probe, timeoutMs = 8000) {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const value = await probe()

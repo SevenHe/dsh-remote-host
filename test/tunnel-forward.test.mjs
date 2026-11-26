@@ -174,3 +174,56 @@ test('tunnel: a forward that stayed up long enough starts a fresh ladder', async
   dispose()
   assert.deepEqual(waits.slice(0, 3), [10, 10, 10], 'a stable forward resets the ladder, saw ' + JSON.stringify(waits))
 })
+/**
+ * With a persistent master the ssh client is only a launcher: it registers the forward and
+ * exits. Liveness is the forward's, so a client exit must be decided by a probe, never by the
+ * process. Without this the supervisor rebuilt a perfectly healthy forward on every refresh.
+ */
+test('tunnel: a client that exits while the master still serves the forward is not a loss', async () => {
+  const lost = []
+  let exitClient
+  const dispose = superviseSshTunnel({
+    sshHost: 'devbox', remoteHost: '127.0.0.1', remotePort: 3080,
+    ladder: [1],
+    healthIntervalMs: 100000,
+    sshControl: true, controlDir: '/tmp/drh-unused-control',
+    // The forward answers: this is what a persistent master serves through.
+    probe: () => Promise.resolve(true),
+    attempt: () => Promise.resolve({
+      ok: true, base: 'http://127.0.0.1:41610', port: 41610,
+      child: { once: (event, handler) => { if (event === 'exit') exitClient = handler } },
+      close: () => {},
+    }),
+    onReady: () => {},
+    onLost: () => { lost.push(Date.now()) },
+  })
+  await tick(5)
+  exitClient()
+  await tick(30)
+  dispose()
+  assert.deepEqual(lost, [], 'a served forward must survive its launcher exiting')
+})
+
+test('tunnel: a client exit with nothing serving the forward is still a loss', async () => {
+  const lost = []
+  let exitClient
+  const dispose = superviseSshTunnel({
+    sshHost: 'devbox', remoteHost: '127.0.0.1', remotePort: 3080,
+    ladder: [1],
+    healthIntervalMs: 100000,
+    sshControl: true, controlDir: '/tmp/drh-unused-control',
+    probe: () => Promise.resolve(false),
+    attempt: () => Promise.resolve({
+      ok: true, base: 'http://127.0.0.1:41611', port: 41611,
+      child: { once: (event, handler) => { if (event === 'exit') exitClient = handler } },
+      close: () => {},
+    }),
+    onReady: () => {},
+    onLost: () => { lost.push(Date.now()) },
+  })
+  await tick(5)
+  exitClient()
+  await tick(30)
+  dispose()
+  assert.equal(lost.length, 1, 'with nothing on the forward the tunnel really is gone')
+})
