@@ -92,9 +92,9 @@ test('control: a directory that cannot be created only costs the optimisation', 
   assert.equal(ensureControlDir('/dev/null/nope'), false)
 })
 test('control: a socket name carries the installation tag, so two installations never share one', () => {
-  const tag = instanceTag('/Users/a/.dsh')
+  const tag = instanceTag('/Users/me/.dsh')
   assert.match(tag, /^[0-9a-f]{8}$/, 'the tag is short and filename-safe: ' + tag)
-  assert.equal(instanceTag('/Users/a/.dsh'), tag, 'the tag is stable for one installation')
+  assert.equal(instanceTag('/Users/me/.dsh'), tag, 'the tag is stable for one installation')
   assert.notEqual(instanceTag('/tmp/dsh-rh-lab'), tag, 'a lab profile gets its own socket')
   assert.equal(controlPathFor('/tmp/drh', 'devbox', tag), '/tmp/drh/cm-devbox-' + tag)
   // The socket path still has to respect the platform limit with a tag on it.
