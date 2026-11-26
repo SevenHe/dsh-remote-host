@@ -106,6 +106,17 @@ export function createPage(options = {}) {
         return respond(options.remoteCatalog === undefined ? {} : options.remoteCatalog)
       }
       if (path.endsWith('/api/session/list')) {
+        // A carrier that is not up yet answers in plain text, which is why the shim must not
+        // feed that body to JSON.parse.
+        if (options.plainTextMountSessionList === true) {
+          return {
+            ok: false,
+            status: 503,
+            headers: { get: () => 'text/plain; charset=utf-8' },
+            text: async () => 'dsh-remote-host: the ssh tunnel is not up',
+            json: async () => { throw new SyntaxError('Unexpected token d in JSON') },
+          }
+        }
         if (options.failRemote === true) return { ok: false, status: 502, json: async () => ({}) }
         // A function form lets one test change the answer between calls.
         return respond({ items: typeof options.remoteItems === 'function' ? options.remoteItems() : remoteItems })

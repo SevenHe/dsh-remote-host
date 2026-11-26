@@ -144,3 +144,34 @@ test('publish: an oversized values block is trimmed but keeps the model selectio
   assert.equal(Object.hasOwn(values, 'blob'), false, 'the oversized payload is not published')
   assert.equal(published[0].projections.asOfSeq, 3)
 })
+
+/**
+ * Every diagnostic snapshot the page publishes, flattened to its event names.
+ * @param page - the page handle under test.
+ * @returns event names, oldest first.
+ */
+function reportedEvents(page) {
+  return page.calls.bodies.mount
+    .filter((entry) => entry.path === '/devbox/__dsh_remote_host__/report')
+    .flatMap((entry) => {
+      try { return JSON.parse(entry.body).events ?? [] } catch (error) { return [] }
+    })
+}
+
+test('sessions: a plain-text carrier answer is unavailable, not a parse failure', async () => {
+  const page = createPage({
+    config: { group: 'none' },
+    localItems: LOCAL_ITEMS,
+    remoteItems: [{ sessionId: REMOTE_SESSION, updatedAt: NOW, running: true }],
+    plainTextMountSessionList: true,
+  })
+  await page.settle()
+  page.fireTimers()
+  await page.settle()
+  // The body is a sentence, not JSON: the list is simply not there yet, so nothing publishes
+  // and the round trip is not reported as a failure.
+  assert.equal(page.sandbox.__DSH_REMOTE_HOST_STATE__, undefined)
+  const names = reportedEvents(page).map((event) => event.name)
+  assert.ok(names.includes('sessions-refresh-unavailable'), 'reported as unavailable: ' + names.join(','))
+  assert.equal(names.includes('sessions-refresh-failed'), false, 'not reported as a failure')
+})
