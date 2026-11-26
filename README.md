@@ -174,9 +174,9 @@ renderer** with `EXC_BREAKPOINT` in V8 more than once, with no reproducible trig
 outside the app, so it was removed instead of kept behind a flag: the browser half no
 longer takes over the sidebar at all.
 
-A profile that still carries `sidebar: sections` or `sections: true` keeps working: the
-plugin prints one deprecation warning and renders nothing in its place, so the shipped
-sidebar stays as it is. Use `remoteBlock: true` for the remote section instead.
+A profile that still carries `sidebar: sections` or `sections: true` keeps working: the key is
+ignored outright and the shipped sidebar stays as it is. Use `remoteBlock: true` for the remote
+section instead.
 
 ### Sidebar capabilities of the removed sections mode
 
@@ -347,7 +347,7 @@ The profile patch (`~/.dsh/profiles/<profile>/cordis.patch.yml`) carries the mou
 | `mount` / `label` | same-origin mount path (default `/devbox`) and its display label |
 | `windowDays` | how far back remote sessions are shown — anything still running is always included (default `30`) |
 | `group` | `single` folds every remote Workspace into one group labelled `label`; `workspace` keeps the remote's own groups (default `single`) |
-| `sidebar` | **removed**: `sections` renders nothing (one deprecation warning, shipped sidebar untouched); use `remoteBlock` |
+| `sidebar` | **removed**: `sections` is ignored outright (shipped sidebar untouched, no warning); use `remoteBlock` |
 | `cookieFile` | cookie path (default `~/.dsh/dsh-remote-host/cookie.txt`) |
 | `sshHost` | OpenSSH alias to reach the remote Host through a local tunnel instead of the network |
 | `sshRemoteHost`, `sshRemotePort` | what the tunnel dials on the far side (defaults: `127.0.0.1`, the upstream port) |
