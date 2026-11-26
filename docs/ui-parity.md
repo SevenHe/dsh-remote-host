@@ -35,7 +35,7 @@
   name: dsh-remote-host        # 包名（或 ./ 相对 patch 文件的路径）
   config:                      # 传给 apply(ctx, config) 的对象，schema 由插件自己声明
     mount: /devbox
-    sections: true
+    remoteBlock: true
 ```
 
 **怎么验证**：`dsh --profile <p> --dump-config | grep -A3 <id>` 能看到这一行，说明 patch 生效；

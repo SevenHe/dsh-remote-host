@@ -25,6 +25,9 @@ import { fileURLToPath } from 'node:url'
 import { isPnpmCommand, pnpmMissingMessage, resolvePnpm } from './lib/pnpm.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
+
+/** Every upstream patch the build applies, discovered so a new one is recorded without a code change. */
+const PATCH_FILES = readdirSync(join(HERE, 'patches')).filter((name) => name.endsWith('.patch')).sort()
 const ROOT = resolve(HERE, '..')
 const APPLY = join(HERE, 'apply-upstream-model-catalog.mjs')
 /** A string that only the patch introduces. The stock build has 0 of it. */
@@ -229,6 +232,7 @@ function packageApp() {
     baseCommit: lock.commit,
     patch: 'scripts/patches/modelcatalog.patch',
     patchSha256: sha256(join(HERE, 'patches/modelcatalog.patch')),
+    patches: PATCH_FILES.map((name) => ({ file: 'scripts/patches/' + name, sha256: sha256(join(HERE, 'patches', name)) })),
     markers: { [MARKER]: marker, storeFor, stockStoreFor: STOCK_STOREFOR },
     dmgSha256: sha256(target),
     dmgBytes: statSync(target).size,

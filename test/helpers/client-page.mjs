@@ -212,7 +212,6 @@ export function createClientPage(options = {}) {
     relative: (value, now) => helpers.relative(value, now),
     memberComparator: (pinned) => helpers.memberComparator(pinned),
     buildBlockRows: (input) => toHost(helpers.buildBlockRows(input)),
-    buildSectionModel: (input) => toHost(helpers.buildSectionModel(input)),
     paintPlan: (input) => toHost(helpers.paintPlan(input)),
   }
   return {

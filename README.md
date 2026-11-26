@@ -11,7 +11,7 @@ Four layers, deliberately without a bundler:
 |---|---|---|
 | `lib/index.js`, `lib/remote-mux.js`, `lib/credential-mint.js` | Host half: the ssh tunnel, credential acquisition, the mounted routes, the two proxies | written by hand, shipped as-is |
 | `src/shim/*.js` → `lib/shim.js` | Page shim: a classic script injected into the renderer | concatenated in filename order by `scripts/build-shim.mjs`; `--check` fails on a stale build |
-| `lib/client.js` | Client half: the sidebar block, remote rows and the sections renderer | **written by hand as a single closure**; no TypeScript, no build step |
+| `lib/client.js` | Client half: the remote workspace block and the shipped-list section headers | **written by hand as a single closure**; no TypeScript, no build step |
 | `src/client/**` | Read-only copies of upstream `ui-workspace` sources, kept for comparison | see `src/client/PROVENANCE.md`; **nothing imports them** |
 
 The directory names invert the usual convention: the implementation of the client half is
@@ -167,20 +167,22 @@ mounted host's workspaces into it as **one native group** titled
     superagent: remote
 ```
 
-#### `sidebar: sections` is experimental
+#### `sidebar: sections` was removed
 
-An earlier design replaced `sidebar.workspaces` with a two-section list. It works
-functionally (pin, archive, search and open reuse the shipped services and the shipped
-sprite icons) but it has **crashed the renderer** with `EXC_BREAKPOINT` in V8 more than
-once, with no reproducible trigger from outside the app. It stays available behind
-`sidebar: sections` for experimentation and must not be enabled in a profile you rely
-on. Everything below about pin/archive/search applies to the shipped rows in native
-mode, which needs none of it.
+An earlier design replaced `sidebar.workspaces` with a two-section list. It **crashed the
+renderer** with `EXC_BREAKPOINT` in V8 more than once, with no reproducible trigger from
+outside the app, so it was removed instead of kept behind a flag: the browser half no
+longer takes over the sidebar at all.
 
-### Sidebar capabilities (experimental sections mode)
+A profile that still carries `sidebar: sections` or `sections: true` keeps working: the
+plugin prints one deprecation warning and renders nothing in its place, so the shipped
+sidebar stays as it is. Use `remoteBlock: true` for the remote section instead.
 
-The opt-in two-section sidebar (`sidebar: sections`) adds a remote section next to the
-local one, and keeps the native behaviours working for **both**:
+### Sidebar capabilities of the removed sections mode
+
+The removed two-section sidebar added a remote section next to the local one and kept the
+native behaviours working for **both**. The table records what that mode did; the shipped
+rows provide the same behaviours in every supported mode:
 
 | capability | how |
 |---|---|
@@ -232,7 +234,7 @@ relays that protocol instead of inventing a new one.
   ┌─────────────────────────────────────┐        ┌───────────────────────┐
   │ renderer (dsh-app:// document)      │        │  /api/...       (RPC) │
   │   ├─ client half  lib/client.js     │        │  /api/remote.mux      │
-  │   │    sidebar sections, labels     │        │  /orchestrator/api    │
+  │   │    sidebar block, labels        │        │  /orchestrator/api    │
   │   └─ shim        lib/shim.js        │        │  (super agent)        │
   │        per-endpoint routing         │        └───────────┬───────────┘
   └──────────────┬──────────────────────┘                    │
@@ -345,10 +347,13 @@ The profile patch (`~/.dsh/profiles/<profile>/cordis.patch.yml`) carries the mou
 | `mount` / `label` | same-origin mount path (default `/devbox`) and its display label |
 | `windowDays` | how far back remote sessions are shown — anything still running is always included (default `30`) |
 | `group` | `single` folds every remote Workspace into one group labelled `label`; `workspace` keeps the remote's own groups (default `single`) |
-| `sidebar` | `sections` renders a second top-level section 远端工作区 beside 工作区 (default: off) |
+| `sidebar` | **removed**: `sections` renders nothing (one deprecation warning, shipped sidebar untouched); use `remoteBlock` |
 | `cookieFile` | cookie path (default `~/.dsh/dsh-remote-host/cookie.txt`) |
 | `sshHost` | OpenSSH alias to reach the remote Host through a local tunnel instead of the network |
 | `sshRemoteHost`, `sshRemotePort` | what the tunnel dials on the far side (defaults: `127.0.0.1`, the upstream port) |
+| `sshControl` | multiplex the plugin's ssh calls onto one OpenSSH master (default `true`); `false` restores one connection per call |
+| `controlDir` | where that master's control socket lives (default `/tmp/drh-ssh-<uid>`, created 0700) |
+| `controlPersistSec` | how long the master outlives its client, so a reconnect reuses the authenticated session (default `120`; `0` ties the master to the tunnel) |
 
 Remote sessions are filtered by `windowDays` and folded into a single `devbox` group
 by default, so a devbox with dozens of projects contributes one readable group
@@ -367,18 +372,21 @@ cp cordis.patch.yml.before-remote-host-<stamp> cordis.patch.yml
 rm node_modules/dsh-remote-host && rm -rf ~/.dsh/dsh-remote-host
 ```
 
-## Two-section sidebar (`sidebar: sections`)
+## Two-section sidebar (`sidebar: sections`, removed)
+
+This mode has been removed from the browser half. The section stays because the slot facts
+it records still govern what a plugin may replace.
 
 The sidebar has one list slot, `sidebar.workspaces`, and no section list beside it, so a
-second top-level section means rendering the list yourself. With `sidebar: sections`
-the browser half replaces that occupant and renders:
+second top-level section means rendering the list yourself. While it existed, the browser
+half replaced that occupant and rendered:
 
 * **工作区** — the local workspaces and their sessions;
 * **远端工作区 · <label>** — the mounted host's workspaces and sessions, rows labelled
   `<workspace> · <title>` so one host still reads as host → workspace → session.
 
-Verified in a real browser: 12 local sessions under 工作区, 88 remote sessions under
-远端工作区 · devbox, and clicking a remote row opens its history.
+Verified in a real browser while it shipped: 12 local sessions under 工作区, 88 remote
+sessions under 远端工作区 · devbox, and clicking a remote row opened its history.
 
 Two facts learned from the runtime, both worth keeping:
 
@@ -441,7 +449,7 @@ Registering at a lower priority overrides **rendering** only. The shipped occupa
 stays registered, so it still **owns** the child slots: re-declaring
 `sidebar.workspaces.directoryFlow` here fails with
 `slot "sidebar.workspaces.directoryFlow" is already declared (by an entry in
-"sidebar.workspaces" (WC))`. Consequences while `sidebar: sections` is on:
+"sidebar.workspaces" (WC))`. Consequences the removed `sidebar: sections` mode had:
 
 * plugins injecting row actions, row leading/trailing/hover, or the directory flow
   keep waiting for a declarer and render nothing (their injections are harmless);
@@ -601,7 +609,7 @@ every remote session as local, which is how sessions appeared under 未分组 af
 while. The browser half also keeps the last known-good set and does not render
 ungrouped rows while classification is unknown.
 
-Rendering rules the sections list had to learn from live use:
+Rendering rules the removed sections list had to learn from live use:
 
 * **Child sessions are not rows.** Subagent sessions (`parentSessionId` set) are not
   reachable from the sidebar natively and their history does not open here either, so
@@ -616,9 +624,8 @@ Rendering rules the sections list had to learn from live use:
   collapsed (a devbox has dozens of workspaces); local ones start expanded.
 * **The disclosure control is a 16px SVG triangle.** Text glyphs at 11px were unreadable.
 
-Trade-off: while enabled, this list is ours, so native-only affordances inside it
-(pins, row context menus, drag ordering, the archive button) are not rendered. Turn
-it off by removing the key.
+Trade-off that mode accepted: while enabled, the list was ours, so native-only affordances
+inside it (pins, row context menus, drag ordering, the archive button) were not rendered.
 
 Both halves learned the same lesson the hard way: a merged-stream consumer that
 refetches on every frame closes a loop with the host's group refresh. The host now

@@ -23,31 +23,6 @@
   }
 
   /**
-   * Rebuild a session/create init without its workspaceId.
-   *
-   * Only used for the synthetic claim Workspace: the create it carries can only be
-   * answered by a Host, and no Host owns that id, so the id is dropped and the local Host
-   * supplies a plain Session. Anything unexpected leaves the request untouched.
-   */
-  function dropWorkspaceId(init) {
-    try {
-      if (init === undefined || init === null || typeof init.body !== 'string') return undefined
-      var parsed = JSON.parse(init.body)
-      var request = createRequest(parsed.payload)
-      if (request === undefined || request.workspaceId !== CLAIM_WORKSPACE_ID) return undefined
-      var copy = {}
-      for (var key in request) { if (Object.prototype.hasOwnProperty.call(request, key) && key !== 'workspaceId') copy[key] = request[key] }
-      parsed.payload.args.request = copy
-      var forwarded = {}
-      for (var field in init) { if (Object.prototype.hasOwnProperty.call(init, field)) forwarded[field] = init[field] }
-      forwarded.body = JSON.stringify(parsed)
-      return forwarded
-    } catch (error) {
-      return undefined
-    }
-  }
-
-  /**
    * Router scope audit (2026-11-23).
    *
    * refersRemote() decides by "does the payload text contain a known remote id", which is
@@ -93,11 +68,8 @@
       if (request.method === EVENT_RESULT_ENDPOINT) return true
       // A create is workspace-scoped: never let a mention of a remote Session id in the
       // payload send it to the mount (that is what made boot restore fail every start).
-      // The claim Workspace still needs the rewrite below, so it is handled here too
-      // rather than being passed straight to the local Host.
-      if (request.method === 'session/create') {
-        return createTarget(request.payload) === 'remote' || isClaimCreate(request.payload) === true
-      }
+      // Everything the mount does not own passes straight through to the local Host.
+      if (request.method === 'session/create') return createTarget(request.payload) === 'remote'
       // The catalogue carries no Session id, but it does need an owner; routeFetch decides
       // that from the focus/persistence clues, so this request must be handled there.
       if (request.method === 'session/modelCatalog') return true
@@ -227,13 +199,7 @@
         note('route-remote', { method: method })
         return localFetch(mountUrl(input), init)
       }
-      // The claim Workspace exists only in the merged client view, so neither Host can
-      // resolve it. Restore asks for a Session there on the first load after such a
-      // selection; drop the workspace and let the local Host answer, instead of failing
-      // the whole restoration with workspace/not-found.
-      var claimless = isClaimCreate(request.payload) === true ? dropWorkspaceId(init) : undefined
-      if (claimless !== undefined) note('claim-create-local', { method: method })
-      return localFetch(input, claimless === undefined ? init : claimless)
+      return localFetch(input, init)
     }
     // The payload names one of the mounted host's Sessions.
     var remote = request !== undefined && refersRemote(request.payload)

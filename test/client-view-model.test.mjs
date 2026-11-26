@@ -1,14 +1,14 @@
 /**
- * The remote block's rows and the sections sidebar's layout are pure functions of the
- * published page state, so they are pinned here without a DOM: grouping, the search
- * filter, the archived filter, the pin split, ordering and the empty-set fallbacks.
+ * The remote block's rows are pure functions of the published page state, so they are
+ * pinned here without a DOM: grouping, the search filter, the archived filter, the
+ * ordering modes and the empty-set fallbacks.
  *
  * The helpers come from the shipped lib/client.js (loaded through the vm helper), so a
  * regression in the real file fails these tests.
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { NOW, createClientPage, session, summary } from './helpers/client-page.mjs'
+import { NOW, createClientPage, summary } from './helpers/client-page.mjs'
 
 /** The block's view state, as the live wrapper fills it. */
 const BLOCK_STATE = {
@@ -134,119 +134,4 @@ test('relative time: resolves against an explicit clock', () => {
   assert.equal(page.view.relative(NOW - 2 * 60_000, NOW), '2分钟')
   assert.equal(page.view.relative(NOW - 3 * 3_600_000, NOW), '3小时')
   assert.equal(page.view.relative(undefined, NOW), '')
-})
-
-/** The sections fixture: local, remote, pinned, archived and one subagent child. */
-function sectionsFixture() {
-  return {
-    sessions: [
-      session('local-1', 'Local one'),
-      session('local-2', 'Pinned local'),
-      session('local-3', 'Other local'),
-      session('remote-1', 'Remote one'),
-      session('remote-2', 'Pinned remote'),
-      session('archived-local', 'Old local'),
-      session('archived-remote', 'Old remote'),
-      session('child', 'Subagent child', { parentSessionId: 'local-1' }),
-    ],
-    workspaces: [
-      { workspaceId: 'local-ws', title: 'Local', sessionIds: ['local-1', 'local-2', 'local-3', 'archived-local'] },
-      { workspaceId: 'drh:remote', title: 'Remote', sessionIds: ['remote-1', 'remote-2'] },
-    ],
-    remote: { ids: ['remote-1', 'remote-2', 'archived-remote'], workspaces: [{ title: 'Remote', sessionIds: ['remote-1', 'remote-2', 'archived-remote'] }] },
-    pinnedIds: new Set(['local-2', 'remote-2']),
-    archivedIds: new Set(['archived-local', 'archived-remote']),
-    needle: '',
-    remoteKnown: true,
-  }
-}
-
-test('sections: local and remote split, pins float, and archive is split by owner', () => {
-  const page = createClientPage()
-  const model = page.view.buildSectionModel(sectionsFixture())
-  assert.deepEqual(keysOf(model.localGroups), ['w:local-ws'])
-  assert.deepEqual(sessionIdsOf(model.localGroups[0].sessions), ['local-1', 'local-3'], 'pinned and archived locals leave the group')
-  assert.deepEqual(sessionIdsOf(model.localPinned), ['local-2'])
-  assert.deepEqual(keysOf(model.remoteGroups), ['r:Remote'])
-  assert.equal(model.remoteGroups[0].stripPrefix, 'Remote', 'a remote row drops the group label prefix it shows')
-  assert.deepEqual(sessionIdsOf(model.remoteGroups[0].sessions), ['remote-1'])
-  assert.deepEqual(sessionIdsOf(model.remotePinned), ['remote-2'])
-  assert.deepEqual(sessionIdsOf(model.archivedLocal), ['archived-local'])
-  assert.deepEqual(sessionIdsOf(model.archivedRemote), ['archived-remote'])
-  assert.equal(model.archivedCount, 2)
-  assert.equal(model.localEmpty, false)
-  assert.equal(model.remoteEmpty, false)
-})
-
-test('sections: subagent children are never listed', () => {
-  const page = createClientPage()
-  const model = page.view.buildSectionModel(sectionsFixture())
-  const listed = model.localGroups.flatMap((group) => group.sessions)
-    .concat(model.localPinned, model.remoteGroups.flatMap((group) => group.sessions), model.remotePinned, model.archivedLocal, model.archivedRemote)
-  assert.equal(listed.some((entry) => entry.sessionId === 'child'), false, 'a child Session is not reachable from this list')
-})
-
-test('sections: the search filters titles and keeps matching archived rows only', () => {
-  const page = createClientPage()
-  const hit = page.view.buildSectionModel({ ...sectionsFixture(), needle: 'old' })
-  assert.deepEqual(hit.localGroups, [], 'no live local title matches')
-  assert.deepEqual(hit.localPinned, [])
-  assert.deepEqual(sessionIdsOf(hit.archivedLocal), ['archived-local'])
-  assert.deepEqual(sessionIdsOf(hit.archivedRemote), ['archived-remote'])
-  assert.equal(hit.localEmpty, true)
-  assert.equal(hit.remoteEmpty, true)
-})
-
-test('sections: a workspace whose only member is pinned disappears but its pin still renders', () => {
-  const page = createClientPage()
-  const model = page.view.buildSectionModel({
-    sessions: [session('only-1', 'Only one')],
-    workspaces: [{ workspaceId: 'only-ws', title: 'Only', sessionIds: ['only-1'] }],
-    remote: { ids: [], workspaces: [] },
-    pinnedIds: new Set(['only-1']),
-    archivedIds: new Set(),
-    needle: '',
-    remoteKnown: false,
-  })
-  assert.deepEqual(model.localGroups, [])
-  assert.deepEqual(sessionIdsOf(model.localPinned), ['only-1'])
-  assert.equal(model.localEmpty, false, 'the pinned block is still content')
-})
-
-test('sections: an ungrouped local session is stray only once the remote set is known', () => {
-  const page = createClientPage()
-  const base = {
-    sessions: [session('lonely', 'Lonely'), session('remote-1', 'Remote one')],
-    workspaces: [],
-    pinnedIds: new Set(),
-    archivedIds: new Set(),
-    needle: '',
-  }
-  const known = page.view.buildSectionModel({ ...base, remote: { ids: ['remote-1'], workspaces: [] }, remoteKnown: true })
-  assert.deepEqual(sessionIdsOf(known.stray), ['lonely'])
-  const unknown = page.view.buildSectionModel({ ...base, remote: { ids: [], workspaces: [] }, remoteKnown: false })
-  assert.deepEqual(unknown.stray, [], 'before the remote set arrives, absence from a workspace is not evidence')
-})
-
-test('sections: an empty page reports both sections empty', () => {
-  const page = createClientPage()
-  const model = page.view.buildSectionModel({
-    sessions: [],
-    workspaces: [],
-    remote: { ids: [], workspaces: [] },
-    pinnedIds: new Set(),
-    archivedIds: new Set(),
-    needle: '',
-    remoteKnown: false,
-  })
-  assert.deepEqual(model.localGroups, [])
-  assert.deepEqual(model.localPinned, [])
-  assert.deepEqual(model.stray, [])
-  assert.deepEqual(model.remoteGroups, [])
-  assert.deepEqual(model.remotePinned, [])
-  assert.deepEqual(model.archivedLocal, [])
-  assert.deepEqual(model.archivedRemote, [])
-  assert.equal(model.archivedCount, 0)
-  assert.equal(model.localEmpty, true)
-  assert.equal(model.remoteEmpty, true)
 })

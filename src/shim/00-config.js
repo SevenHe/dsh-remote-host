@@ -189,6 +189,10 @@
         note('publish-skip-empty', {})
         return
       }
+      // Before the layout digest below: membership can change while the count and the
+      // workspace titles stay the same (one Session replaces another), and the shipped
+      // tree must not keep hiding an id that left the set.
+      publishHiddenSessions()
       var signature = JSON.stringify([ids.length, spaces.map(function (space) { return [space.title, space.sessionIds.length] })])
       if (signature === publishedSignature) return
       publishedSignature = signature
@@ -200,6 +204,57 @@
   }
   /** Cheap guard so unchanged layouts are not republished on every merge. */
   var publishedSignature = ''
+
+  /**
+   * Publish the ids the shipped sidebar must keep out of its own tree.
+   *
+   * With `group: none` no remote Workspace record reaches the merged baseline, so the shipped
+   * tree would file every remote Session under its Ungrouped bucket. The shipped tree reads
+   * this Set in `sessionVisible()` and drops those ids, which is the whole hiding mechanism:
+   * no synthetic Workspace and no stylesheet take part any more. `single`/`workspace` leave
+   * the global alone because their remote rows are real merged workspaces.
+   *
+   * The Set is rebuilt only when membership changed: every list answer reaches here, and the
+   * tree holds one object across its renders.
+   */
+  var hiddenSignature = null
+  var hiddenSet
+
+  function publishHiddenSessions() {
+    if (GROUP_MODE !== 'none') return
+    try {
+      var current = globalThis.__DSH_HIDDEN_SESSIONS__
+      // A value of another type is another producer's; the tree ignores it as well, so leave
+      // it in place rather than overwrite something this shim does not own.
+      if (current !== undefined && current !== null && current instanceof Set !== true) return
+      var ids = Array.from(remoteSessions)
+      ids.sort()
+      var signature = ids.join(',')
+      if (signature === hiddenSignature && current instanceof Set === true) return
+      hiddenSignature = signature
+      hiddenSet = new Set(ids)
+      globalThis.__DSH_HIDDEN_SESSIONS__ = hiddenSet
+    } catch (error) { /* hiding is cosmetic */ }
+  }
+
+  /**
+   * Drop the published Set, so a page that no longer runs this shim cannot keep hiding ids.
+   *
+   * The next list answer republishes it, which is what repairs the set after a restore from
+   * the back/forward cache.
+   */
+  function releaseHiddenSessions() {
+    try {
+      if (hiddenSet !== undefined && globalThis.__DSH_HIDDEN_SESSIONS__ === hiddenSet) delete globalThis.__DSH_HIDDEN_SESSIONS__
+    } catch (error) { /* teardown is best effort */ }
+    hiddenSet = undefined
+    hiddenSignature = null
+  }
+
+  try {
+    if (typeof globalThis.addEventListener === 'function') globalThis.addEventListener('pagehide', releaseHiddenSessions)
+  } catch (error) { /* a page without events keeps the set until it goes away */ }
+  try { globalThis.__DSH_REMOTE_HOST_RELEASE_HIDDEN__ = releaseHiddenSessions } catch (error) { /* diagnostics only */ }
 
   /** Record workspace membership so merged rows can carry their workspace name. */
   function learnWorkspaces(side) {

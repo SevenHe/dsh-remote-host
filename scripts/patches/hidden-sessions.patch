@@ -1,0 +1,43 @@
+diff --git a/packages/client/ui-workspace/src/client/tree.ts b/packages/client/ui-workspace/src/client/tree.ts
+index e4323909..5fc851dc 100644
+--- a/packages/client/ui-workspace/src/client/tree.ts
++++ b/packages/client/ui-workspace/src/client/tree.ts
+@@ -232,6 +232,30 @@ export type ArchivedFilter = 'default' | 'show' | 'only'
+  * sessions follow the archived filter, while their accounting slots remain
+  * either way so unarchiving restores position.
+  */
++/** Sessions a carrier keeps in the catalog for routing but does not want listed. */
++const NO_HIDDEN_SESSIONS: ReadonlySet<string> = new Set()
++
++/**
++ * Ids the page asked to keep out of the sidebar.
++ *
++ * A carrier that fronts another Host must register its Sessions so writes reach the owning
++ * Host, but those rows belong to its own surface, not to the shipped tree.
++ * @returns the ids currently hidden, empty when no carrier claimed any.
++ */
++function hiddenSessionIds(): ReadonlySet<string> {
++  const page = globalThis as { __DSH_HIDDEN_SESSIONS__?: ReadonlySet<string> }
++  const hidden = page.__DSH_HIDDEN_SESSIONS__
++  return hidden instanceof Set ? hidden : NO_HIDDEN_SESSIONS
++}
++
++/**
++ * Whether one Session belongs in the shipped sidebar.
++ * @param session - the summary under test.
++ * @param current - the Session the main view is showing, which stays visible while blank.
++ * @param archived - the ids the Host reports as archived.
++ * @param archivedFilter - which side of the archived split the sidebar shows.
++ * @returns true when the row belongs in the tree.
++ */
+ function sessionVisible(
+   session: SessionSummary,
+   current: SessionId | undefined,
+@@ -239,6 +263,7 @@ function sessionVisible(
+   archivedFilter: ArchivedFilter,
+ ): boolean {
+   if (session.origin === 'subagent') return false
++  if (hiddenSessionIds().has(session.id)) return false
+   if (session.blank && session.id !== current) return false
+   switch (archivedFilter) {
+     case 'default':
