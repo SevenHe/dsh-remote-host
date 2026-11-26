@@ -2,6 +2,16 @@
 
 ## 未发布
 
+### 修复（SSH 隧道：一条长连接，探测不再重建端口）
+
+- **每条重连都换一个 upstream 端口**：`mountRemote` 每次被 Cordis 重新 apply 都新建一个 `superviseSshTunnel`（`localPort` 从 undefined 起、重新 `freePort()`）。日志里 2026-11-26T03:27:50.748Z 起 40 毫秒内 6 次 `apply: upstream=…60477/60483/60488/60491/60494`，而同一秒 `lib/routes.js` 的时间戳正是 11:27:50——即"改插件文件 → 条目重启 → 重建隧道"。于是任何一次改动/配置重载都会把已经指向旧端口的 mux、会话流、请求全部打断。
+- **就绪判定是假的**：`attemptSshTunnel` 用 `probeLoopback`（裸 TCP accept）就算 up。`ssh -L` 在远端起可达之前就先绑本地端口，内核还能用 backlog 完成握手，于是发布了一条"什么都没穿过"的隧道，紧接着自己的健康探测两次 miss（1200ms 超时 / 1500ms 间隔）把它拆掉——探测反过来制造了它要治的抖动。
+- **退避梯度在抖动时永远停在第一级**：`cycle()` 每次"成功"都 `failures = 0`，连上 1 秒就死也算成功，所以每次重建都从 500ms 起，可以无限热循环。
+- **被替代的 supervisor 收不掉在飞的 attempt**：dispose 只关 `current`，还在 dial 的 `ssh` 子进程最多再活 12 秒并占着端口；6 次 apply 就有 6 个竞争的子进程与端口。
+- **修法**：① 抽出 `sharedSshForward()`，按 `sshHost|remoteHost|remotePort` 复用**一条**转发：重新 apply 会重挂到运行中的隧道并立刻拿到同一个 base（端口不变），最后一个挂载 detach 后空闲 30 秒才停，所以"停插件"也不会留 ssh 在后台；② 就绪改为**真实往返**（`probeTunnel`，800ms 预算 / 12s 上限），裸 accept 只当候选；③ 新隧道先给 1 秒静默期再探测，且**只有存活 ≥30 秒的隧道失联才重置梯度**（`stableMs`），抖动期间梯度 500ms→1s→2s→4s→8s→15s→30s 递增；④ attempt 接受 `AbortSignal`，dispose 时立即杀掉子进程。
+- **参考**：DSH 自己的 `packages/ssh/ssh` 就是这个模型——一条常驻 `ssh` + `ServerAliveInterval=10/CountMax=3`，再叠一条应用层心跳（`leaseMs/3`，不重入，超时 `leaseMs/2`），心跳失败是"判定这条连接死了"，不是"拆掉立刻重拨"。
+- **回归**：新增 `test/tunnel-forward.test.mjs` 6 例（重挂复用同一 base 且不重拨、空闲才停、就绪需真实往返、取消 attempt 会回收子进程、抖动时梯度递增、稳定后梯度重置）；原有 `test/ssh-mode.test.mjs`、`test/tunnel-retry.test.mjs` 口径不变（阻塞拨号仍是 503、重建仍复用同一端口、卡死仍在 5 秒内重建）。`npm run check` 172/172。
+
 ### 修复（侧栏：连接抖动时标题文字一直闪）
 
 - **「远端工作区 · <host>」这一行在不停闪**：`lib/client.js` 把连接状态（`open`/`connecting`/`error`）算进了结构签名与表头形状，于是每一次腿状态变化都被当成「结构变了」——整块列表连表头一起重建，标题的文字节点每次都被销毁重造。而 shim 在每次腿重连时都会发布 `connecting` → `open`（`src/shim/50-router.js` 的 `connect` 与 `open` 回调），本机 11-26 的插件日志里隧道每 30~49 秒重建一次、一次连发 6 次 `apply`，`renderer-trace.log` 里状态发布在突发时中位间隔 187ms，所以看起来是「一直在闪」。
