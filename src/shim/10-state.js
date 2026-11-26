@@ -1,7 +1,7 @@
 /**
  * MODULE: 10-state.js
- * Decisions over one client request: the claim-Workspace create rewrite, which Host owns a
- * Session or the model catalogue, and the session/list merge with the snapshot it publishes.
+ * Decisions over one client request: which Host owns a Session, a create or the model
+ * catalogue, and the session/list merge with the snapshot it publishes.
  */
   function localFetch(input, init) {
     return previous.fetch ? previous.fetch(input, init) : globalThis.fetch(input, init)
@@ -38,9 +38,6 @@
     } catch (error) { return undefined }
   }
 
-  /** Synthetic claim Workspace: published only in the merged client view, owned by no host. */
-  var CLAIM_WORKSPACE_ID = REMOTE_WORKSPACE_PREFIX + 'claim'
-
   /** The create request inside a client-request payload, when it is a create. */
   function createRequest(payload) {
     var args = payload !== null && typeof payload === 'object' ? payload.args : undefined
@@ -53,9 +50,9 @@
    *
    * A create is workspace-scoped, so it must be decided by its workspaceId. Deciding it
    * from "does the payload mention a remote id" routed a boot-time restore create to the
-   * mount whenever the payload carried the remote Session id it was restoring, or the
-   * synthetic claim workspace, and the mount answered workspace/not-found on every start.
-   * Only a workspace the remote host actually owns belongs to the mount.
+   * mount whenever the payload carried the remote Session id it was restoring, and the mount
+   * answered workspace/not-found on every start. Only a workspace the remote host actually
+   * owns belongs to the mount; every other create is the local Host's, unchanged.
    * @returns 'remote' or 'local'.
    */
   function createTarget(payload) {
@@ -65,36 +62,6 @@
     if (workspaceId.indexOf(REMOTE_WORKSPACE_PREFIX) !== 0) return 'local'
     var raw = workspaceId.slice(REMOTE_WORKSPACE_PREFIX.length)
     return remoteWorkspaceIds.has(raw) ? 'remote' : 'local'
-  }
-
-  /**
-   * Copy a create payload without its workspaceId.
-   *
-   * The rpc carrier hands the payload object directly, so the claim rewrite has to build a
-   * new object instead of editing a JSON body (dropWorkspaceId does that for the fetch
-   * carrier). Only the request/args/payload objects are copied; the caller's payload is
-   * never mutated, because a carrier may reuse it.
-   * @returns the rewritten payload, or undefined when this is not a claim create.
-   */
-  function withoutWorkspaceId(payload) {
-    var request = createRequest(payload)
-    if (request === undefined || request.workspaceId !== CLAIM_WORKSPACE_ID) return undefined
-    var nextRequest = {}
-    for (var key in request) { if (Object.prototype.hasOwnProperty.call(request, key) && key !== 'workspaceId') nextRequest[key] = request[key] }
-    var args = payload.args
-    var nextArgs = {}
-    for (var argKey in args) { if (Object.prototype.hasOwnProperty.call(args, argKey)) nextArgs[argKey] = args[argKey] }
-    nextArgs.request = nextRequest
-    var nextPayload = {}
-    for (var field in payload) { if (Object.prototype.hasOwnProperty.call(payload, field)) nextPayload[field] = payload[field] }
-    nextPayload.args = nextArgs
-    return nextPayload
-  }
-
-  /** Whether a create names the synthetic claim Workspace, which no Host can resolve. */
-  function isClaimCreate(payload) {
-    var request = createRequest(payload)
-    return request !== undefined && request.workspaceId === CLAIM_WORKSPACE_ID
   }
 
   function refersRemote(value) {
@@ -405,8 +372,9 @@
     var merged = mergeListValues(localBody.result.value, remoteBody.result.value)
     note('list-merge', { local: merged.localCount, remote: merged.remoteCount, visible: merged.visibleRemote })
     // The remote rows always ride along inside merged.value.items: they are the client
-    // catalog's only source for a remote id, and the claiming Workspace keeps them out of
-    // the shipped Ungrouped bucket.
+    // catalog's only source for a remote id. With group: none the published hidden-session
+    // Set keeps those ids out of the shipped tree, so the catalog and the sidebar disagree
+    // on purpose.
     var remoteItems = sessionItemsOf(remoteBody.result)
     try { publishRemoteSessionList(remoteItems === undefined ? [] : remoteItems) } catch (error) { /* publishing is best effort */ }
     return envelope(localBody.rpcId, merged.value)

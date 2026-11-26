@@ -2,6 +2,13 @@
 
 ## 未发布
 
+### 变更（侧栏：远端会话改由 `__DSH_HIDDEN_SESSIONS__` 隐藏，删除 claim workaround）
+
+- **隐藏机制换成上游正式契约**：`group: none` 不再伪造 `workspace:drh:claim` 收拢远端会话，而是把已发布的远端 id 写进 `globalThis.__DSH_HIDDEN_SESSIONS__`（`Set<string>`），由 shipped 树的 `sessionVisible()` 跳过（配套上游补丁 `scripts/patches/hidden-sessions.patch`）。集合成员变化时才重建；`pagehide` 时释放（下一次 list 应答会重发，覆盖 back/forward cache 恢复）；该全局已被非 Set 值占用时不接管。
+- **删除 claim workaround**：`claimRemoteSide()` 及其调用点、三处 create 改写（`withoutWorkspaceId` / `dropWorkspaceId` / rpc 分支）、`api-session/added` 抑制、client 的 `hideClaimSection`/`hideClaimOverflow` 与 `block.css` 两条规则。`session/create` 仍只按 `workspaceId` 判定（真实远端工作区 → mount），payload 不再被任何载体改写；远端 `api-session/added` 照常转发，另触发一次 list 重读以便隐藏集合尽快学到新 id。
+- **保留** `single`/`workspace` 的既有行为（真实远端工作区记录）。catalog 仍由合并后的 `session/list` 供给，`sessions.retain` 不受影响。
+- **回归**：`test/hidden-sessions.test.mjs` 7 例（发布 Set / 仅 none 发布 / 成员变化才重建 / pagehide 释放且下次 list 重发 / 非 Set 不接管 / 三种模式下任何 publish 结果都不再出现 claim / catalog 仍列远端 id）；`group-modes`、`create-routing`、`event-filter` 的 claim 用例按新行为改写。`node --test test/{group-modes,create-routing,session-list-merge,routing,client-*}` 56/56，页面级 shim/client 套件 111/111。本地 client 未打上游隐藏补丁，故「隐藏生效」需在打过补丁的环境端到端验证；本地验证的是「发布正确」。
+
 ### 修复（SSH 隧道：一条长连接，探测不再重建端口）
 
 - **每条重连都换一个 upstream 端口**：`mountRemote` 每次被 Cordis 重新 apply 都新建一个 `superviseSshTunnel`（`localPort` 从 undefined 起、重新 `freePort()`）。日志里 2026-11-26T03:27:50.748Z 起 40 毫秒内 6 次 `apply: upstream=…60477/60483/60488/60491/60494`，而同一秒 `lib/routes.js` 的时间戳正是 11:27:50——即"改插件文件 → 条目重启 → 重建隧道"。于是任何一次改动/配置重载都会把已经指向旧端口的 mux、会话流、请求全部打断。

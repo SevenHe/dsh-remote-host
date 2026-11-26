@@ -145,10 +145,10 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 | # | 行为 | 怎么验（一条命令/动作） | 失败长什么样 |
 |---|---|---|---|
 | B-16 | 打开远端会话后，再点**本地**会话，远端那行的选中高亮必须消失 | 点远端行 → 点本地行 → 读 `.drh-sessionRow.selected` 数量，应为 0 | 两行同时发灰（`blockState.current` 从未清除） |
-| B-17 | 本地工作区只有**一行**「展开其余 N 个会话」 | 展开本地工作区，读所有含「展开其余」的叶子节点，**可见**的必须只有 1 个 | claim 桶的溢出行漏出来（key 以 `overflow:drh:` 开头） |
+| B-17 | 本地工作区只有**一行**「展开其余 N 个会话」，shipped 树里没有任何远端会话行 | 展开本地工作区，读所有含「展开其余」的叶子节点，**可见**的必须只有 1 个；再读 `[data-row-key^="session:"]`，不得有远端 id | 远端 id 没进 `__DSH_HIDDEN_SESSIONS__`（或 Set 被别的值占了），远端会话被当作未分组渲染出来 |
 | B-18 | **新出现**（刚在远端创建）的会话也能打开，不只是老会话 | 让远端产生一条新会话 → 点它 → 主区域标题切过去、无 toast | `sessions.retain: unknown session <id>`（catalog 里没有它） |
 | B-19 | 空闲时不应有「每次事件全量重建」 | 跑 60s 心跳，`renders` 增量应很小（个位数）；`nodes` 不应随渲染线性增长 | 每秒 1 次重建、nodes 随渲染 +4~5 增长 |
-| B-20 | 隐藏原生行时，被隐藏行不能仍被计数 | 见 B-17；另外确认 claim 行 `display:none` 且高度 0、不可 focus | 桶内「展开其余 N」把隐藏行算进 N |
+| B-20 | 隐藏的远端会话不参与任何计数 | 见 B-17；远端 id 在 `sessionVisible()` 就已返回 false，因此不渲染、不计入「展开其余 N」，也不是靠 `display:none` 藏起来 | 行渲染出来后被 CSS 隐藏，桶内「展开其余 N」把隐藏行算进 N |
 | B-21 | 新建工作区是**居中模态**（遮罩 + 380 宽 + 圆角 28） | 点远端表头 `+`，读面板 rect 与 backdrop/radius | 贴在按钮旁的小浮层 |
 | B-22 | ~~运行中的远端会话行在静止态就能看出来，空闲时不可见~~ **已被 B-24 取代**（空闲改为常显灰点） | 见 B-24 | 见 B-24 |
 | B-23 | 默认排序与本地一致：**刚更新的远端会话在其组内第一行**，且**它的工作区组排到区块最上**（默认 orderBy=updated） | 取 `__DSH_REMOTE_HOST_SESSIONS__` 里 `updatedAt` 最大的会话，在区块里读：①该组内前 3 行的会话 id（它应为第 1 行）；②区块前 2 个组的标题（含它的组应为第 1 个）。再切「手动排序」读一次组顺序，应回到保存的手动顺序 | 新会话被追加到组末尾；或它的工作区组沉在区块最底；或切手动后组顺序仍被活跃度改写 |
@@ -260,7 +260,7 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 
 **根因**：`lib/client.js` 的 `openRemoteSession()` 为了让 `sessions.retain` 接受一个客户端目录里还没有的远端会话，会先用 `manager.handleSessionAdded(row)` 注入一行，`openSession` 之后再在 `.then`/同步路径里调用 `drop()` → `manager.handleSessionRemoved(sessionId)`，把这一行删掉。composer 是否可用取决于该会话是否仍在客户端 catalog 里，删掉后 composer 立刻退化为不可用态——**transcript 能看，是因为渲染走的是已打开的主视图；不能发，是因为 catalog 里已经没有这条会话**。
 
-**修法**：新增 `settle()`，打开成功后**保留** catalog 行（仅当 shim 已把该 id 归为远端——`remoteState().ids` 命中）；否则仍按旧行为删除。保留不会让远端行泄漏进原生列表，因为 `group: none` 下 shim 发布的隐藏 claim Workspace（`workspace:drh:claim`）已经认领了所有已发布的远端 id，其行被 block 样式表隐藏。
+**修法**：新增 `settle()`，打开成功后**保留** catalog 行（仅当 shim 已把该 id 归为远端——`remoteState().ids` 命中）；否则仍按旧行为删除。保留不会让远端行泄漏进原生列表，因为 shim 把每个已发布的远端 id 写进 `__DSH_HIDDEN_SESSIONS__`，shipped 树的 `sessionVisible()` 命中即不渲染（见 `src/shim/00-config.js` 的 `publishHiddenSessions()`）。
 
 **实测（lab 19963 插件指向本分支，upstream 为私有 19965 实例，headless Chrome + CDP，真实远端会话）**：
 
@@ -281,7 +281,7 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 
 **不回归实测**：
 
-- 远端行不泄漏到原生列表：shipped 树里 remote id 的 2 行 `getBoundingClientRect()` 宽高为 0 且 `offsetParent === null`（不可见），可见泄漏计数 `visibleRemoteLeaks = 0`；隐藏 claim 行 `display: none` 符合设计。
+- 远端行不泄漏到原生列表：shipped 树里 remote id 的 2 行 `getBoundingClientRect()` 宽高为 0 且 `offsetParent === null`（不可见），可见泄漏计数 `visibleRemoteLeaks = 0`；远端 id 在 `__DSH_HIDDEN_SESSIONS__` 里，本来就不进树。
 - 切回本地会话高亮清除：点可见的本地区会话行后，块内 `selected` 行数 `1 → 0`，composer 保持可用（`contenteditable=true`，无「会话不可用」）。
 
 **注意（lab 配方坑）**：profile 的 `node_modules` 若整体软链到 `~/.dsh/profiles/desktop/node_modules`，其中 `dsh-remote-host` 指向主 checkout，改 profile `package.json` 的 `link:` 依赖不生效。必须逐项软链后单独把 `dsh-remote-host` 指向 worktree，并用 `readlink -f <profile>/node_modules/dsh-remote-host/lib/client.js` 确认，否则测的是旧代码。
@@ -333,7 +333,7 @@ ok order change rebuilds the list  {"order":["p-c","p-a","p-b"],"same":false,"wr
 - **分组行点不开**：按行中心点击会落在尾部动作按钮的 SVG 上（`elementFromPoint` 可证），行的点击处理器不执行。改为点标题区域（`.drh-title`），并把命中的元素打进日志——布局再变时会显示「点到了哪个元素」，而不是干等超时。
 - **B-31 用例被前置状态污染**：B-31 前面刚把排序切成「手动排序」，此时 `updatedAt` 不会移动任何行，于是「不重建」是正确的；但那样就测不到 B-31。现在先切回「最近更新」再改时间。
 
-## boot 期 workspace/not-found（drh:claim）的根因与实测（2026-11-23）
+## boot 期 workspace/not-found 的根因与实测（2026-11-23）
 
 **现象**：页面刚加载、每次启动，控制台出现：
 
@@ -354,34 +354,35 @@ POST /devbox/api/session/create
 **修法**（`src/shim/10-state.js` + `src/shim/20-transport.js`）：
 
 1. `createTarget()`：create 是**工作区作用域**操作，只按 `workspaceId` 判定——仅当它是远端 Host 真正拥有的工作区（`drh:<raw>` 且 `raw` 属于 `remoteWorkspaceIds`）才去 mount，其余一律本地。
-2. `isClaimCreate()` + `dropWorkspaceId()`：合成 claim 工作区只存在于合并后的客户端视图，**任何 Host 都无法解析** `drh:claim`；因此对这一个 id 去掉 `workspaceId` 后交给本地 Host，恢复链正常完成。
-3. `wouldRoute()` 把 claim 也算作「需要处理」，否则会直通 `localFetch` 而跳过上面的改写。
+2. fetch 与 rpc 两个载体只做这一件判定，不再改写 payload。
+
+> 合成 claim 工作区后来被删除（隐藏改由 `__DSH_HIDDEN_SESSIONS__` 承担，见 `src/shim/00-config.js`），所以 `drh:claim` 这个 id 不再出现在任何 publish 结果里；原先两条「claim 改写」用例随之删除，换成「真实远端工作区的 create 直达 mount 且 payload 原样」两例（fetch / rpc 各一）。
 
 **实测 before / after（同一组断言）**：
 
 | 断言 | 修前 shim (5268140) | 修后 shim |
 |---|---|---|
 | 本地工作区 + 远端 sessionId 的 create 不得到达 mount | **FAIL**（must not reach the mount: it does not own local-ws） | **PASS** |
-| drh:claim 的 create 本地化并去掉 workspaceId | **FAIL**（workspaceId 仍在） | **PASS** |
+| 真实远端工作区的 create 到达 mount，payload 原样 | **FAIL**（没有这条判定） | **PASS** |
 
-命令：`DRH_SHIM=/tmp/old-shim.js node --test test/create-routing.test.mjs`（旧 shim → 2 fail）对比 `node --test test/create-routing.test.mjs`（2 pass）。
+命令：`DRH_SHIM=/tmp/old-shim.js node --test test/create-routing.test.mjs`（旧 shim → 4 fail）对比 `node --test test/create-routing.test.mjs`（4 pass）。
 
 **lab 实测**（19967，插件指向本分支；upstream 为本机私有 DSH 实例，真实远端会话 9 条）：把 `localStorage[dsh.sessions.current]` 指向一条**远端** sessionId 后重载，Network 抓到的 `session/create`：**mount 0 / local 0**；`workspace/not-found` 类日志 **0 条**；composer `contenteditable=true`、无「会话不可用」。
 
-**不回归**：claim 行仍 `display: none`（远端行不可见、不泄漏进原生列表）；composer 可用；`npm run check` 49/49。
+**不回归**：远端行不进 shipped 树（`__DSH_HIDDEN_SESSIONS__` 命中即不渲染）；composer 可用。
 
 ### 补充：rpc 载体同修 + 路由判据审计（2026-11-23）
 
 **为什么必须补**：桌面壳发布 `__DSH_TRANSPORT__` 且可能带 `rpc`；shim 在 `diag.hasRpc === true && typeof base.rpc.call === 'function'` 时用 rpc 覆盖 fetch 包装（`src/shim/80-install.js` 的 rpc 分支）。只修 fetch 分支的话，**在最关键的那个部署上等于没修**。
 
-**改动**：`80-install.js` 的 rpc 分支（原第 149 行）对 `session/create` 也走 `createTarget()`；claim 用新helper `withoutWorkspaceId()`（`10-state.js`）改写——rpc 载体拿到的是 payload **对象**而非 JSON body，所以需要对象级重写（`dropWorkspaceId` 仍是 fetch 的 body 字符串变体），且不修改调用方的 payload。
+**改动**：`80-install.js` 的 rpc 分支（原第 149 行）对 `session/create` 也走 `createTarget()`，与 fetch 载体同一判定；payload 不再被任何载体改写。
 
 **rpc 用例 before / after**（同一组断言）：
 
 | 断言 | 修前 shim (5268140) | 修后 shim |
 |---|---|---|
 | rpc carrier：本地工作区的 create 不得到达 mount | **FAIL**（the mount must not receive a create for a local workspace） | **PASS** |
-| rpc carrier：claim 的 create 到达本地载体且无 workspaceId | **FAIL**（the claim workspaceId is dropped before the local carrier sees it） | **PASS** |
+| rpc carrier：真实远端工作区的 create 到达 mount，payload 原样 | **FAIL**（没有这条判定） | **PASS** |
 
 命令：`DRH_SHIM=/tmp/old-shim.js node --test test/create-routing.test.mjs` → 4 fail；`node --test test/create-routing.test.mjs` → 4 pass。测试助手 `test/helpers/page.mjs` 新增 `options.rpc` 可种一个解码后的 rpc 载体并记录调用（`rpcCalls` / `rpcCallsFor`）。
 

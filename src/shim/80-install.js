@@ -193,9 +193,8 @@
           }
           // A create is workspace-scoped, exactly as in the fetch carrier: a payload that
           // merely names the remote Session being restored must not be sent to the remote
-          // host, and the synthetic claim workspace must reach the local host without its
-          // workspaceId. A desktop shell publishes this carrier, so the decision has to be
-          // repeated here or the fetch-side fix silently does nothing on that path.
+          // host. A desktop shell publishes this carrier, so the decision has to be repeated
+          // here or the fetch-side rule silently does nothing on that path.
           if (endpoint === 'session/create') {
             if (createTarget(payload) === 'remote') {
               note('route-remote', { endpoint: endpoint })
@@ -203,9 +202,7 @@
                 return remoteUnavailable(endpoint, error)
               })
             }
-            var claimless = withoutWorkspaceId(payload)
-            if (claimless !== undefined) note('claim-create-local', { endpoint: endpoint })
-            return baseRpc.call(channel, endpoint, claimless === undefined ? payload : claimless, signal).catch(function (error) {
+            return baseRpc.call(channel, endpoint, payload, signal).catch(function (error) {
               return carrierUnavailable(endpoint, error)
             })
           }

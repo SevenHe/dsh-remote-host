@@ -68,24 +68,34 @@ async function mergeWorkspaceFollow({ group, remoteItems = REMOTE_ITEMS, remoteS
   return { page, merged: baselines[0].value.value }
 }
 
-test('group none: exactly one hidden claiming workspace covers every remote session', async () => {
+test('group none: the shipped baseline carries no remote workspace row', async () => {
+  // The block renders remote Sessions, so the shipped tree must receive local rows only. The
+  // remote ids stay out of that tree through the published hidden-session Set, not through a
+  // synthetic Workspace that could be filed under Ungrouped.
   const { merged } = await mergeWorkspaceFollow({ group: 'none' })
-  assert.deepEqual(merged.items.map((item) => item.workspaceId), ['local-ws', 'drh:claim'])
+  assert.deepEqual(merged.items.map((item) => item.workspaceId), ['local-ws'])
   assert.deepEqual(merged.items[0].sessionIds, [LOCAL_SESSION], 'the local workspace is untouched')
-  const claim = merged.items[1]
-  assert.equal(claim.title, '远端工作区 · devbox', 'the claim carries the block label')
-  assert.deepEqual(claim.sessionIds, [REMOTE_SESSION], 'every visible remote session is claimed')
+  assert.deepEqual(merged.archivedSessionIds, [])
+  assert.deepEqual(merged.pinnedSessionIds, [])
 })
 
-test('group none: no remote session is left unclaimed (Ungrouped guard)', async () => {
-  const { merged } = await mergeWorkspaceFollow({ group: 'none', remoteItems: [
+test('group none: every remote session is listed for the catalog while hidden from the tree', async () => {
+  // sessions.retain refuses an id the client catalog does not hold, so the merged session/list
+  // must keep the remote rows; the hidden-session Set is what keeps them out of the sidebar.
+  const page = createPage({ config: { group: 'none' }, localItems: LOCAL_ITEMS, remoteItems: [
     { sessionId: REMOTE_SESSION, updatedAt: NOW, running: true },
     { sessionId: 'worker-2', updatedAt: NOW, running: false },
   ] })
-  const claimed = new Set()
-  for (const item of merged.items) for (const id of item.sessionIds) claimed.add(id)
-  const published = ['worker-1', 'worker-2']
-  assert.deepEqual(published.filter((id) => !claimed.has(id)), [], 'no published remote session is unclaimed')
+  await page.settle()
+  const response = await page.built.fetch('api/session/list', {
+    method: 'POST',
+    body: JSON.stringify({ type: 'client-request', rpcId: 'r1', method: 'session/list', payload: { args: {} } }),
+  })
+  const listed = (await response.json()).result.value.items.map((item) => item.sessionId)
+  assert.deepEqual(listed, [LOCAL_SESSION, REMOTE_SESSION, 'worker-2'], 'the catalog still learns every remote id')
+  const hidden = page.sandbox.__DSH_HIDDEN_SESSIONS__
+  assert.ok(hidden instanceof Set, 'the hidden-session set is published')
+  assert.deepEqual([...hidden].sort(), [REMOTE_SESSION, 'worker-2'], 'exactly the visible remote ids are hidden')
 })
 
 test('group none: remote archive/pin marks are not folded in', async () => {

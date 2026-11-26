@@ -136,37 +136,23 @@
   }
 
   /**
-   * Hidden claiming Workspace for the modes that fold no remote record into the shipped tree.
+   * The remote side of the merged baseline for `group: none`: nothing.
    *
-   * The client catalog is fed by session/list, so a remote id has to be listed for
-   * sessions.retain to accept it. One synthetic Workspace claims every visible remote
-   * Session so the shipped tree can never place them in its Ungrouped bucket; the block
-   * stylesheet hides its row, so the user sees no extra group.
+   * That mode shows remote Sessions only in the plugin-rendered block, so the shipped tree
+   * gets no remote Workspace row at all; the ids are published in the hidden-session Set
+   * (00-config.js) instead, which keeps them out of the tree's Ungrouped bucket. The ids
+   * still reach the client catalog through the merged session/list, which is what makes
+   * sessions.retain accept them.
    */
-  function claimRemoteSide() {
-    var ids = []
-    remoteSessions.forEach(function (id) { ids.push(id) })
-    if (ids.length === 0) return { items: [], archivedSessionIds: [], pinnedSessionIds: [] }
-    var now = new Date().toISOString()
-    return {
-      items: [{
-        workspaceId: REMOTE_WORKSPACE_PREFIX + 'claim',
-        path: GROUP_PATH,
-        title: GROUP_LABEL,
-        sessionIds: ids,
-        createdAt: now,
-        updatedAt: now,
-      }],
-      archivedSessionIds: [],
-      pinnedSessionIds: [],
-    }
+  function emptyRemoteSide() {
+    return { items: [], archivedSessionIds: [], pinnedSessionIds: [] }
   }
 
   function mergeBaseline(local, remote) {
     publishRemoteMarks(remote)
-    var kept = GROUP_MODE === 'none'
-      ? claimRemoteSide()
-      : (GROUP_MODE === 'single' ? collapseRemoteSide(remote) : pruneRemoteSide(remote))
+    var kept = GROUP_MODE === 'single'
+      ? collapseRemoteSide(remote)
+      : (GROUP_MODE === 'workspace' ? pruneRemoteSide(remote) : emptyRemoteSide())
     return {
       items: local.items.concat(kept.items),
       archivedSessionIds: local.archivedSessionIds.concat(kept.archivedSessionIds),

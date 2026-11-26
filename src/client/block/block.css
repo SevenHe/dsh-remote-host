@@ -1437,21 +1437,6 @@ html[data-platform='darwin'] .drh-menuBacking {
 
 .drh-menuInput { background: transparent !important; }
 
-/* The claiming Workspace exists only so the client catalog accepts remote ids (and the
-   shipped tree never files them under Ungrouped). It is not a user-facing group: hiding the
-   row costs no layout, cannot be expanded and takes no focus. */
-[data-row-key='workspace:drh:claim'] {
-  display: none !important;
-}
-
-/* The claim bucket exists only so the client catalog can retain remote ids. Its own overflow
-   row counts the remote rows the block hides, which surfaced as a second "expand the
-   remaining N" line under the local workspace. Keyed by the claim prefix, so the local
-   bucket's own overflow row is never touched; a static rule survives the shipped tree's
-   remounts, unlike an inline style. */
-[data-row-key^='overflow:drh:'] {
-  display: none !important;
-}
 /* ------------------------------------------------------------------ *
  * Add-workspace dialog (ported from the shipped modal atoms, class
  * 1ytzq). The reference is the shipped workspace-rename dialog measured

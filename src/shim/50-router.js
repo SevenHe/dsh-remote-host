@@ -4,12 +4,12 @@
  * forwarding, local<->remote fallbacks, and merged workspace/event streams.
  */
   /**
-   * A Session the mounted Host created must reach the remote block, never the shipped
-   * list. The shipped client materializes a list row from the forwarded
-   * `api-session/added` emit (`session-controller`'s `ctx.remote.$on` relay), and with
-   * `group: none` no remote Workspace is published to claim that row, so it would show
-   * up in the shipped "Ungrouped" bucket. Re-read the mounted Host's list instead: the
-   * block renders from the published snapshot and the routing table learns the id.
+   * Keep the mounted Host's Session list fresh.
+   *
+   * A Session the mounted Host starts or creates emits nothing this page renders from: the
+   * block reads the published snapshot and the shipped tree reads the merged baseline, both
+   * rebuilt from session/list. Re-reading the list is therefore how a new id reaches the
+   * routing table, the block and the hidden-session Set that keeps it out of the shipped tree.
    */
   var POLL_INTERVAL_MS = 4000
   var remoteSessionsRefresh
@@ -673,15 +673,12 @@
             }
             rememberRemoteEvent(value.eventId)
           }
-          // With 'group: none' the shipped list carries no remote Session and no remote
-          // Workspace claims one, so the row the shipped client builds from this emit
-          // lands in the shipped "Ungrouped" bucket. The remote block owns those Sessions;
-          // refresh its published snapshot instead of growing the shipped list.
-          if (GROUP_MODE === 'none' && value.type === 'emit' && value.event === 'api-session/added') {
-            note('events-skip-remote-added', { count: 1 })
-            scheduleRemoteSessionsRefresh()
-            return
-          }
+          // The frame is forwarded like any other emit, and a created Session is additionally
+          // unknown to every published snapshot until a list answer carries it: the block, the
+          // routing table and the hidden-session Set all read that answer, so ask for one now
+          // instead of waiting for the next poll tick. This is not a filter: the emit still
+          // reaches the shipped client.
+          if (value.type === 'emit' && value.event === 'api-session/added') scheduleRemoteSessionsRefresh()
         }
         var events = {}
         for (var eventKey in frame) { if (Object.prototype.hasOwnProperty.call(frame, eventKey)) events[eventKey] = frame[eventKey] }

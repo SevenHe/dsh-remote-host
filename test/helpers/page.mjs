@@ -76,8 +76,8 @@ export function createPage(options = {}) {
   const config = { mount: '/devbox', label: 'devbox', streams: true, streamRelay: false, ...options.config }
   const localItems = options.localItems ?? []
   const remoteItems = options.remoteItems ?? []
-  // bodies are recorded alongside the paths so a test can assert on a rewritten request
-  // (the claim-workspace create drops its workspaceId before the local Host sees it).
+  // bodies are recorded alongside the paths, so a test can assert on exactly what one leg
+  // received rather than only on the path.
   const calls = { local: [], mount: [], sockets: [], bodies: { local: [], mount: [] } }
   const sockets = new Map()
   const clientFrames = []
@@ -120,6 +120,8 @@ export function createPage(options = {}) {
 
   /** Deterministic timers: tests drive every transition, nothing fires later. */
   const pendingTimers = []
+  /** Page-global event listeners, so a test can fire pagehide/load the way a browser would. */
+  const globalListeners = []
   const sandbox = {
     console: { log() {}, warn() {}, error() {}, info() {} },
     URL,
@@ -152,6 +154,8 @@ export function createPage(options = {}) {
     performance: { memory: undefined },
     setTimeout: (fn, delay) => { pendingTimers.push({ fn, delay: delay === undefined ? 0 : delay }); return pendingTimers.length },
     clearTimeout: () => {},
+    addEventListener: (type, handler) => { globalListeners.push({ type, handler }) },
+    removeEventListener: () => {},
     setInterval: () => 0,
     clearInterval: () => {},
     queueMicrotask,
@@ -177,6 +181,9 @@ export function createPage(options = {}) {
   sandbox.globalThis = sandbox
   sandbox.window = sandbox
   sandbox.self = sandbox
+  // Globals a page may already hold before this script runs (a value another script claimed,
+  // a persisted page state): seeding them is how a test reproduces that situation.
+  if (options.globals !== undefined) Object.assign(sandbox, options.globals)
 
   const listeners = new Map()
   sandbox.document = {
@@ -274,6 +281,10 @@ export function createPage(options = {}) {
     sent: (kind) => sockets.get(kind)?.sent ?? [],
     /** Frames the router sent to the client, optionally filtered. */
     frames: (predicate) => (predicate === undefined ? clientFrames : clientFrames.filter(predicate)),
+    /** Fire one page-global event, the way the browser dispatches pagehide/load. */
+    emitGlobal(type, event = {}) {
+      for (const entry of globalListeners.filter((listener) => listener.type === type)) entry.handler(event)
+    },
     /** Delays of the timers still pending, in scheduling order. */
     timerDelays: () => pendingTimers.map((timer) => timer.delay),
     fireTimers() {
