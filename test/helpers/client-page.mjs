@@ -213,6 +213,7 @@ export function createClientPage(options = {}) {
     memberComparator: (pinned) => helpers.memberComparator(pinned),
     buildBlockRows: (input) => toHost(helpers.buildBlockRows(input)),
     buildSectionModel: (input) => toHost(helpers.buildSectionModel(input)),
+    paintPlan: (input) => toHost(helpers.paintPlan(input)),
   }
   return {
     sandbox,

@@ -2,6 +2,13 @@
 
 ## 未发布
 
+### 修复（侧栏：连接抖动时标题文字一直闪）
+
+- **「远端工作区 · <host>」这一行在不停闪**：`lib/client.js` 把连接状态（`open`/`connecting`/`error`）算进了结构签名与表头形状，于是每一次腿状态变化都被当成「结构变了」——整块列表连表头一起重建，标题的文字节点每次都被销毁重造。而 shim 在每次腿重连时都会发布 `connecting` → `open`（`src/shim/50-router.js` 的 `connect` 与 `open` 回调），本机 11-26 的插件日志里隧道每 30~49 秒重建一次、一次连发 6 次 `apply`，`renderer-trace.log` 里状态发布在突发时中位间隔 187ms，所以看起来是「一直在闪」。
+- **修法**：连接状态不再进入 `signature` / `headerShape`，只参与新的 `paintPlan().dot`；表头在结构重绘时也只在自己的形状变化（搜索框展开、label 改变）时才替换，状态改由 `patchHeaderDot()` 原地改 `data-state` / `title`。状态变化时表头、标题文字与圆点三个节点都保持身份，连接中的 spinner 也不再每次刷新重启动画。
+- **实测（真实 DOM：`/tmp` 隔离页 + headless Chrome 157，10 次状态翻转）**：修前容器级 childList 变更 **30** 次、表头与标题节点均被替换；修后 **0** 次、只有圆点属性变更 **20** 次，表头/标题/圆点身份不变。列表变更（改名 + running）仍按原路径生效，搜索展开仍按预期重建表头一次。
+- **回归**：`test/client-paint.test.mjs` 8 例锁住 `paintPlan`（状态只喂 dot，搜索/label 才重建表头）；`scripts/patch-probe.mjs` 新增 3b 两例在真实页面上断言同一口径。`npm test` 166/166。
+
 ### 修复（模型目录补丁：客户端参数个数校验）
 
 - **每次加载都留一条 `client api: session/modelCatalog expected 1 argument(s), got 0`**：补丁给宿主方法加了可选的 `sessionId`，而生成的客户端按声明的参数**个数**校验，于是「没有 Session」的读取（0 参）在客户端本地就被拒 —— 请求根本没发出去，只留下一条 rejection。补丁内三处 Session-less 调用改为显式传一个位置参数：`undefined` 在编码时被丢弃，线上仍是「无 `sessionId` 字段」，老宿主行为不变；对应的客户端 spec 断言同步改为 `(undefined)`。

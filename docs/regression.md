@@ -154,6 +154,7 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 | B-23 | 默认排序与本地一致：**刚更新的远端会话在其组内第一行**，且**它的工作区组排到区块最上**（默认 orderBy=updated） | 取 `__DSH_REMOTE_HOST_SESSIONS__` 里 `updatedAt` 最大的会话，在区块里读：①该组内前 3 行的会话 id（它应为第 1 行）；②区块前 2 个组的标题（含它的组应为第 1 个）。再切「手动排序」读一次组顺序，应回到保存的手动顺序 | 新会话被追加到组末尾；或它的工作区组沉在区块最底；或切手动后组顺序仍被活跃度改写 |
 | B-24 | 状态指示与本地一致：**仅在 running 时**、在标题**左侧**显示 6px 绿点 `#2ea043`；空闲行**没有任何点** | 取一条 `running:true` 与一条 `running:false` 的远端会话行：前者的首个子元素是 `.drh-runDot`（computed `background` = `rgb(46, 160, 67)`、6×6）；后者行内**查不到** `.drh-runDot`；时间仍只在右侧 resting 槽 | 空闲行仍有点（黑点/灰点）；点夹在标题与时间之间；running 行没有点 |
 | B-25 | 远端运行中会话行的状态呈现与本地**完全一致**（同一 leading 槽、同一 sprite/组件、同一动画）；空闲行无任何前导状态 | 找一条本地 running 会话与一条远端 running 会话，比对 leading 槽的 `data-icon` 与尺寸，要求相等 | 远端自绘圆点/灰点/位置不同/空闲也显示 |
+| B-32 | 连接状态抖动**只补丁圆点**，不重建区块：表头、标题文字、圆点三个节点身份保持不变 | `node scripts/patch-probe.mjs --cdp <cdp>` 的 `flap -> dot patched, header and label kept` / `recovery -> …` 两例；或手动翻转 `__DSH_REMOTE_HOST_STATUS__.remote` 后 dispatch `drh:state`，读 `#drh-remote-block` 的容器级 childList 变更数应为 0 | 每次状态变化整块重绘：标题文字和 3 个图标一起闪，`data-drh-inst` 不变但节点全换（腿每次重连都发 `connecting` → `open`，所以看起来是「一直闪」） |
 
 **通用教训**：验证一个「隐藏/抵消」类修复时，不能只验「可见行数没变」，还要验**文案/计数行**（`展开其余 N`）、`aria`/可 focus 性、以及**操作一次之后**的状态（重挂载会冲掉内联样式）。
 
@@ -289,7 +290,7 @@ node scripts/parity-snapshot.mjs --port 19949 --cdp 9222 --out /tmp/parity.json
 
 ## B-30 / B-31 怎么跑：行级补丁探针 `scripts/patch-probe.mjs`
 
-B-30（状态变化只补丁、不重建）与 B-31（排序变化才重建）由 `scripts/patch-probe.mjs` 自动判定，无需真远端：探针锁定 `__DSH_REMOTE_HOST_STATE__` / `__DSH_REMOTE_HOST_SESSIONS__` / `__DSH_REMOTE_HOST_MARKS__` 三个全局，再 dispatch `drh:state`/`drh:sessions`/`drh:marks`，走的仍是生产链路（globals → 事件 → 重绘）。
+B-30（状态变化只补丁、不重建）、B-31（排序变化才重建）与 B-32（连接状态抖动只补丁圆点）由 `scripts/patch-probe.mjs` 自动判定，无需真远端：探针锁定 `__DSH_REMOTE_HOST_STATE__` / `__DSH_REMOTE_HOST_SESSIONS__` / `__DSH_REMOTE_HOST_MARKS__` / `__DSH_REMOTE_HOST_STATUS__` 四个全局，再 dispatch `drh:state`/`drh:sessions`/`drh:marks`，走的仍是生产链路（globals → 事件 → 重绘）。
 
 ```bash
 # 1) lab：profile 的 node_modules 必须是**实体副本**，再单独把插件软链到被测分支
@@ -322,6 +323,8 @@ ok order change rebuilds the list  {"order":["p-c","p-a","p-b"],"same":false,"wr
 ```
 
 读法：`same` 是行节点是否被复用；`mutations` 是容器级 childList 变更数（`0` = 没有重建、只补丁）；`nested` 是行内就地变更。B-30 要求 `same:true` 且 `mutations:0`；B-31 要求 `same:false` 且 `mutations>0`。
+
+> **B-32 是后加的用例。** 上面那份 2026-11-23 的 10 条断言记录早于它，所以 total 不含这 2 条；现在跑同一脚本会多出 `flap -> dot patched, header and label kept` 与 `recovery -> dot patched back, header and label kept`。它锁的是「连接状态不进结构签名」：状态翻转期间容器级 childList 必须是 0，表头/标题/圆点三个节点身份不变，只有 `data-state` 与 `title` 变。
 
 > **`written` 不是「容器被重写」的信号。** `lib/client.js:1297` 把它算成「重新生成的 html 串与已存串不同」，而已存串只在重建分支里更新，所以补丁路径下它会一直是 `true`（甚至出现「先 true 后 false」的陈旧基线）。判断是否重建只看 `mutations` 与 `same`；探针因此不再断言 `written`，只把它留在 JSON 里供参考。若希望 `written` 能当重建指标，需要产品侧在重建分支里单独置位——那是 `lib/client.js` 的改动，不在探针范围内。
 

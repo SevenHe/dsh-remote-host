@@ -55,11 +55,15 @@ const HARNESS = `
     { id: 'p-b', title: 'Bravo', updatedAt: now - 60000, running: false },
     { id: 'p-c', title: 'Charlie', updatedAt: now - 600000, running: false },
   ]
+  // The mount leg's connection status is one of the published facts a refresh reads; locking it
+  // lets a case flip it without a real tunnel.
+  const status = { remote: 'open', local: 'open' }
+  Object.defineProperty(window, '__DSH_REMOTE_HOST_STATUS__', { configurable: true, get: () => status, set: () => {} })
   Object.defineProperty(window, '__DSH_REMOTE_HOST_STATE__', { configurable: true, get: () => state, set: () => {} })
   Object.defineProperty(window, '__DSH_REMOTE_HOST_SESSIONS__', { configurable: true, get: () => sessions, set: () => {} })
   Object.defineProperty(window, '__DSH_REMOTE_HOST_MARKS__', { configurable: true, get: () => marks, set: () => {} })
   window.__probe = {
-    state, marks, sessions,
+    state, marks, sessions, status,
     fire (kind) { document.dispatchEvent(new CustomEvent('drh:' + kind, { detail: {} })) },
     seed () { this.fire('state'); this.fire('sessions'); this.fire('marks') },
     observe () {
@@ -162,6 +166,30 @@ const HARNESS = `
     setRunning (id, running) { this.sessions.find((s) => s.id === id).running = running; this.fire('sessions'); return true },
     setUpdated (id, at) { this.sessions.find((s) => s.id === id).updatedAt = at; this.fire('sessions'); return true },
     setPinned (ids) { this.marks.pinned = ids; this.fire('marks'); return true },
+    /** Tag the section header, its label and its status dot, to tell a patch from a rebuild. */
+    tagHeader () {
+      const container = document.querySelector('#drh-remote-block')
+      if (container === null) return false
+      this.headNode = container.querySelector('.drh-sectionHeader')
+      this.labelNode = container.querySelector('.drh-sectionLabel')
+      this.dotNode = container.querySelector('.drh-dot')
+      return this.headNode !== null && this.labelNode !== null && this.dotNode !== null
+    },
+    header () {
+      const container = document.querySelector('#drh-remote-block')
+      if (container === null) return { missing: true }
+      const head = container.querySelector('.drh-sectionHeader')
+      const label = container.querySelector('.drh-sectionLabel')
+      const dot = container.querySelector('.drh-dot')
+      return {
+        headerSame: head === this.headNode,
+        labelSame: label === this.labelNode,
+        dotSame: dot === this.dotNode,
+        dotState: dot === null ? null : dot.getAttribute('data-state'),
+      }
+    },
+    /** A mux leg republishes connecting then open; both are attribute-only changes. */
+    setStatus (state) { this.status.remote = state; this.fire('state'); return true },
   }
   return true
 })()
@@ -238,6 +266,20 @@ async function main () {
   const titled = await measure(cdp)
   const titledRow = await cdp.evaluate("window.__probe.row('p-b')")
   check("title text patched in place", titledRow.same === true && titledRow.title === "Bravo renamed" && titled.mutations.direct === 0, { same: titledRow.same, title: titledRow.title, written: titled.written, mutations: titled.mutations.direct })
+
+  // 3b. A connection flap patches the dot alone. The mux leg republishes connecting then open
+  //     on every reconnect, and counting that as a structural change used to rebuild the whole
+  //     block — the section label included, which is what a user sees as a blinking title.
+  if (await cdp.evaluate("window.__probe.tagHeader()") !== true) fail("the section header is not there to tag")
+  await cdp.evaluate("window.__probe.reset(); window.__probe.setStatus('connecting'); true")
+  const connecting = await measure(cdp)
+  const connectingHeader = await cdp.evaluate("window.__probe.header()")
+  check("flap -> dot patched, header and label kept", connectingHeader.headerSame === true && connectingHeader.labelSame === true && connectingHeader.dotSame === true && connectingHeader.dotState === "connecting" && connecting.mutations.direct === 0, { ...connectingHeader, mutations: connecting.mutations.direct })
+
+  await cdp.evaluate("window.__probe.reset(); window.__probe.setStatus('open'); true")
+  const recovered = await measure(cdp)
+  const recoveredHeader = await cdp.evaluate("window.__probe.header()")
+  check("recovery -> dot patched back, header and label kept", recoveredHeader.headerSame === true && recoveredHeader.labelSame === true && recoveredHeader.dotState === "open" && recovered.mutations.direct === 0, { ...recoveredHeader, mutations: recovered.mutations.direct })
 
   // 4. row menu: open and close patch the class, and the surface is end-anchored
   const rowMenuButton = await cdp.evaluate("window.__probe.center('#drh-remote-block [data-drh-session=\"p-b\"] [data-drh-rowmenu]')")
