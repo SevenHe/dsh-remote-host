@@ -14,6 +14,26 @@ import { attemptSshTunnel, sharedSshForward, superviseSshTunnel } from '../lib/i
 /** Resolve after one macrotask turn, so a pending attempt or retry can be reached. */
 const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/**
+ * Await a promise the implementation settles from its own unref'd timers.
+ *
+ * The tunnel unrefs every timer it owns so a mounted plugin never holds the host process open.
+ * A test that awaits such a promise therefore has no ref'd handle of its own, and Node may drain
+ * the loop before the promise settles - the runner then cancels the case with "Promise
+ * resolution is still pending but the event loop has already resolved". One ref'd interval for
+ * the duration keeps the loop alive without changing what the case asserts.
+ * @param promise - the implementation promise under test.
+ * @returns whatever the promise resolves to.
+ */
+async function awaitSettled(promise) {
+  const keepAlive = setInterval(() => {}, 1000)
+  try {
+    return await promise
+  } finally {
+    clearInterval(keepAlive)
+  }
+}
+
 /** The ssh child a stand-in attempt hands back; records whether it was reaped. */
 function childStub(record = { killed: 0 }) {
   return {
@@ -103,12 +123,12 @@ test('forward: the forward is stopped only after the last mount stays away', asy
 
 test('ssh attempt: readiness needs a round trip, not just a bound port', async () => {
   let roundTrips = 0
-  const result = await attemptSshTunnel('host', '127.0.0.1', 3080, 41400, undefined, {
+  const result = await awaitSettled(attemptSshTunnel('host', '127.0.0.1', 3080, 41400, undefined, {
     spawn: () => childStub(),
     // The port is bound from the first poll, but nothing crosses the hop yet.
     probeLoopback: () => Promise.resolve(true),
     probeTunnel: () => { roundTrips += 1; return Promise.resolve(roundTrips > 2) },
-  })
+  }))
   assert.equal(result.ok, true, 'the attempt eventually succeeds')
   assert.ok(roundTrips >= 3, 'a bound port alone must never count as ready, saw ' + String(roundTrips))
   result.close()
@@ -125,7 +145,7 @@ test('ssh attempt: a hop that never answers is not reported as up', async () => 
   })
   await tick(30)
   controller.abort()
-  const result = await pending
+  const result = await awaitSettled(pending)
   assert.equal(result.ok, false, 'a forward that carries nothing is not up')
   assert.equal(result.cancelled, true)
   assert.ok(Date.now() - started < 5000, 'cancelling must not wait out the readiness budget')
