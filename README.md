@@ -251,7 +251,7 @@ relays that protocol instead of inventing a new one.
 |---|---|
 | `lib/index.js` | Host half: `/devbox` prefix mount, mux upgrade relay, index shim injection, host-cookie relay, optional SSH tunnel, and the `/orchestrator/api` proxy used when the super agent follows the remote. |
 | `lib/shim.js` | Browser half injected into the page: per-endpoint unary routing, one socket multiplexing the local and remote mux legs, workspace/session/event merging, retry-on-not-found, and reload-on-stale-shim. |
-| `lib/client.js` | Client plugin: the opt-in two-section sidebar and the `Superagent · <host>` label. |
+| `lib/client.js` | Client plugin: the remote workspace block patched into the shipped sidebar, plus its section headings. |
 | `scripts/setup.mjs` | Mints the remote browser-session cookie and writes the profile patch row. |
 | `scripts/ssh-helper-deploy.mjs` | Packages the SSH provider helper, prints the `dsh-ssh` row, and deploys it with `--remote`. |
 
@@ -354,6 +354,7 @@ The profile patch (`~/.dsh/profiles/<profile>/cordis.patch.yml`) carries the mou
 | `sshControl` | multiplex the plugin's ssh calls onto one OpenSSH master (default `true`); `false` restores one connection per call |
 | `controlDir` | where that master's control socket lives (default `/tmp/drh-ssh-<uid>`, created 0700) |
 | `controlPersistSec` | how long the master outlives its client, so a reconnect reuses the authenticated session (default `120`; `0` ties the master to the tunnel) |
+| `bannerLogGlob` | log a launcher redirects the Host banner into, e.g. `~/super_agent/.artifacts/dsh-superagent-*.log`; read when the tmux pane holds no banner (default: pane only) |
 
 Remote sessions are filtered by `windowDays` and folded into a single `devbox` group
 by default, so a devbox with dozens of projects contributes one readable group

@@ -68,6 +68,8 @@ async function doctor(options) {
 
 const sshHost = argOf('ssh', 'devbox')
 const tmuxSession = argOf('tmux-session', 'dsh-superagent')
+// Pass this when the launcher redirects the Host banner to a log instead of the tmux pane.
+const bannerLogGlob = argOf('banner-log-glob', '')
 const cookieFile = expandPath(argOf('cookie-file', join(homedir(), '.dsh', 'dsh-remote-host', 'cookie.txt')))
 
 if (command === 'doctor') {
@@ -81,7 +83,12 @@ if (command !== 'url' && command !== 'refresh-cookie') {
 
 let refreshed
 try {
-  refreshed = await refreshCredential({ sshHost, tmuxSession, cookieFile })
+  refreshed = await refreshCredential({
+    sshHost,
+    tmuxSession,
+    bannerLogGlob: bannerLogGlob.length > 0 ? bannerLogGlob : undefined,
+    cookieFile,
+  })
 } catch (error) {
   // The mint already names the failing hop and the Host's status; this entry point only owns the
   // CLI prefix, so the operator sees one actionable line instead of a stack.
