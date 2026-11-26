@@ -356,6 +356,11 @@ The profile patch (`~/.dsh/profiles/<profile>/cordis.patch.yml`) carries the mou
 | `controlPersistSec` | how long the master outlives its client, so a reconnect reuses the authenticated session (default `120`; `0` ties the master to the tunnel) |
 | `bannerLogGlob` | log a launcher redirects the Host banner into, e.g. `~/super_agent/.artifacts/dsh-superagent-*.log`; read when the tmux pane holds no banner (default: pane only) |
 
+That log path is only half of what the remote machine needs: the Host banner has to be reachable where the
+mint looks, and the memory runtime's key has to be in the Host process environment. Both are deployment
+steps on the remote side, not plugin config — see [docs/remote-host-service.md](docs/remote-host-service.md),
+and verify them with `node scripts/remote-host-doctor.mjs --ssh <alias>`.
+
 Remote sessions are filtered by `windowDays` and folded into a single `devbox` group
 by default, so a devbox with dozens of projects contributes one readable group
 instead of a wall of them (`group: workspace` keeps the remote's own grouping).
