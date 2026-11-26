@@ -135,3 +135,38 @@ test('relative time: resolves against an explicit clock', () => {
   assert.equal(page.view.relative(NOW - 3 * 3_600_000, NOW), '3小时')
   assert.equal(page.view.relative(undefined, NOW), '')
 })
+
+/**
+ * The highlight answers two questions: which Session the main view holds, and which working
+ * directory it belongs to. Both used to be missing from the block, because the only thing that
+ * ever set a row current was a click inside the block itself, so a Session opened from the Super
+ * Agent panel, from a search result, or restored at boot was never marked.
+ */
+test('current session: the retained Session is read the way the shipped tree reads it', () => {
+  const page = createClientPage()
+  const snapshot = (retained) => ({
+    ids: retained === undefined ? ['s1', 's2'] : ['s1', 's2'],
+    byId: {
+      s1: { retainedBy: { mainView: retained === 's1' ? 1 : 0 } },
+      s2: { retainedBy: { mainView: retained === 's2' ? 2 : 0 } },
+    },
+  })
+  assert.equal(page.view.currentSessionFrom(snapshot('s1')), 's1')
+  assert.equal(page.view.currentSessionFrom(snapshot('s2')), 's2', 'a higher count still means the main view')
+  assert.equal(page.view.currentSessionFrom(snapshot()), null, 'nothing retained means no highlight')
+})
+
+test('current session: a snapshot without rows or with odd rows yields no highlight', () => {
+  const page = createClientPage()
+  assert.equal(page.view.currentSessionFrom(undefined), null)
+  assert.equal(page.view.currentSessionFrom({}), null)
+  assert.equal(page.view.currentSessionFrom({ ids: ['x'], byId: {} }), null, 'a known id with no row is skipped')
+  assert.equal(page.view.currentSessionFrom({ ids: ['y'], byId: { y: { retainedBy: {} } } }), null, 'no mainView count')
+  assert.equal(page.view.currentSessionFrom({ ids: [null], byId: { null: { retainedBy: { mainView: 1 } } } }), 'null')
+})
+
+test('current session: ids are strings even when the store hands over another key type', () => {
+  const page = createClientPage()
+  const snapshot = { ids: [42], byId: { 42: { retainedBy: { mainView: 1 } } } }
+  assert.equal(page.view.currentSessionFrom(snapshot), '42', 'the row key matches a data attribute')
+})

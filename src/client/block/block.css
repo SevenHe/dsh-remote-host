@@ -1664,3 +1664,20 @@ html[data-platform='darwin'] .drh-menuBacking {
     animation: none;
   }
 }
+
+/*
+ * The workspace that holds the Session the main view is showing.
+ *
+ * The row highlight alone says which Session is open; this says which working directory it
+ * belongs to, and it stays readable while the group is collapsed. Colours are the shipped
+ * tokens: accent for the leading icon, primary label for the title.
+ */
+.drh-projectRow.drh-groupCurrent .drh-title {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+
+.drh-projectRow.drh-groupCurrent .drh-folder,
+.drh-projectRow.drh-groupCurrent .drh-chevron {
+  color: var(--dsw-alias-state-business-primary);
+}

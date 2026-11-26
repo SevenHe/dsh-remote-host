@@ -94,7 +94,7 @@ test('view model: the section model is gone, the block helpers are still publish
   const page = createClientPage()
   const helpers = page.sandbox.__DRH_VIEW_MODEL__
   assert.deepEqual(Object.keys(helpers).sort(),
-    ['buildBlockRows', 'memberComparator', 'paintPlan', 'relative', 'titleOf'])
+    ['buildBlockRows', 'currentSessionFrom', 'groupHasCurrent', 'memberComparator', 'paintPlan', 'relative', 'titleOf'])
   assert.equal(helpers.buildSectionModel, undefined)
 })
 

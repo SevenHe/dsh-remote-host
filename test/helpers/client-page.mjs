@@ -213,6 +213,8 @@ export function createClientPage(options = {}) {
     memberComparator: (pinned) => helpers.memberComparator(pinned),
     buildBlockRows: (input) => toHost(helpers.buildBlockRows(input)),
     paintPlan: (input) => toHost(helpers.paintPlan(input)),
+    groupHasCurrent: (group) => helpers.groupHasCurrent(group),
+    currentSessionFrom: (snapshot) => helpers.currentSessionFrom(snapshot),
   }
   return {
     sandbox,
