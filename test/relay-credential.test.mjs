@@ -19,8 +19,9 @@ function upstream(behaviour) {
     seen.push(req.headers.cookie)
     const answer = behaviour(seen.length, req.headers.cookie)
     if (answer !== 'accept') {
-      socket.write('HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\n\r\n')
-      socket.destroy()
+      // A real refusal is an ordinary response; destroying straight after writing makes the
+      // delivery a race between the response and the reset.
+      socket.end('HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n')
       return
     }
     socket.write('HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\n\r\n')
