@@ -9,6 +9,18 @@
 - **保留** `single`/`workspace` 的既有行为（真实远端工作区记录）。catalog 仍由合并后的 `session/list` 供给，`sessions.retain` 不受影响。
 - **回归**：`test/hidden-sessions.test.mjs` 7 例（发布 Set / 仅 none 发布 / 成员变化才重建 / pagehide 释放且下次 list 重发 / 非 Set 不接管 / 三种模式下任何 publish 结果都不再出现 claim / catalog 仍列远端 id）；`group-modes`、`create-routing`、`event-filter` 的 claim 用例按新行为改写。`node --test test/{group-modes,create-routing,session-list-merge,routing,client-*}` 56/56，页面级 shim/client 套件 111/111。本地 client 未打上游隐藏补丁，故「隐藏生效」需在打过补丁的环境端到端验证；本地验证的是「发布正确」。
 
+### 新增（SSH 多路复用：一条 master 服务所有 ssh 调用）
+
+- **每次 mint 都重新握手**：插件的两类 ssh 调用（常驻转发 `ssh -N -L` 与凭证铸造 `ssh -T <host> …`）各开各的连接，每次都要重新握手与认证。本机实测单次新连接 **759ms**（3 次：759/830/752），而复用一条已认证的 master 只需 **112ms**（164/112/107）。
+- **做法**：新增 `lib/ssh-control.js`，把「一个 host 一个 socket」的口径收敛到一处——`controlPathFor(dir, host)`（确定性路径，别名清洗 + 截断 32 字符，避开 macOS `sun_path` 104 字节上限）、`controlArgs()`（`ControlMaster=auto` + `ControlPath=…` + **`ControlPersist=no`**）、`exitArgs()`（`-O exit`）、`ensureControlDir()`（0700）。转发进程即 master，铸造与脚本复用它的 socket；`ControlPersist=no` 保证 master 的生命周期不超过创建它的隧道进程，因此**不违反「退出后不留 ssh 残留」**。
+- **接线**：新增配置 `sshControl`（布尔，默认 `true`）与 `controlDir`（默认 `/tmp/drh-ssh-<uid>`）；`mountRemote` 解析一次，向下传给 `sharedSshForward → superviseSshTunnel → attemptSshTunnel`（`deps.control = { enabled, dir }`），并同时传给三个 `makeRefresher` 调用点（`lib/credentials.js` 新增第三参数，把两个字段带进 mint）。低层 `resolveControl()` 是 **opt-in**（只有显式 `enabled: true` 才启用）：产品默认由 mount 解析，单元测试因此不会去 spawn 真 ssh。
+- **清理**：`killTunnel(child, control)` 先发 `ssh -O exit`（独立短命子进程、1s 上限、失败只记日志），再走原有的 SIGTERM→250ms→SIGKILL 进程组升级；顺序与「不等待」都保持，转发端口仍在同一 tick 释放。
+- **实测（真实 devbox，独立于被测代码的 bash/python 探针）**：`ssh -O check` 回 `Master running (pid=…)`；socket 权限 `srw-------`（目录 0700）；经 master 执行远端命令 0.09s；`ssh -O exit` → `Exit request sent.` → socket 消失、master 进程消失。
+- **独立黑盒验证**：`test/ssh-control-integration.test.mjs` 用「假 ssh 放 PATH 首位」的方式黑盒跑真实链路，5/5 通过，并验证了**敏感性**（接线落地前同一 harness 观察到全红；把 `ControlPersist` 期望改成 `yes` 会失败）。记录到的 argv 恰好 3 条：转发（含 `-L`）、mint（同一 `ControlPath`）、`-O exit`；禁用时 2 条且零 control 选项、不建 socket。
+- **断线重连也免认证（master 常驻）**：`ControlPersist` 不再固定为 `no`，改为可配置窗口 `controlPersistSec`（默认 **120s**）。实测（真实 devbox）：杀掉隧道客户端后 master 仍然存活（`Master running (pid=85331)`），经由它的重连 **122ms**（202/122/105）vs 全新握手 **832ms**（869/791/832）——**每次重连省 710ms**。
+- **崩溃兜底（双保险）**：① 正常退出仍先发 `ssh -O exit`（已测：master 与 socket 一起消失）；② 宿主被 `SIGKILL` 之类无法优雅退出时，master 只在窗口内残留，实测 5s 窗口后自动消失、socket 一并清掉；③ 下次建 master 前先 sweep：socket 文件存在但 `ssh -O check` 不答（上次崩溃的遗骸）→ 先删除再由 ssh 接管，避免 "Control socket connect" 卡死。实测：`SIGKILL` 后 1s master 仍在（正是复用的前提），窗口过后 master 与 socket 均消失。
+- **回归**：`npm run check` **210/210**；新增 4 个测试文件（`ssh-control` 10、`credential-control` 10、`tunnel-control` 10、`ssh-control-integration` 5），覆盖常驻窗口的取值口径、崩溃遗骸的清理顺序（必须在 spawn 之前）、以及"活着的 master 不被动"；既有 `ssh-mode`/`tunnel-retry`/`tunnel-forward` 口径不变。四个新测试文件运行后临时目录增量为 0。
+
 ### 修复（SSH 隧道：一条长连接，探测不再重建端口）
 
 - **每条重连都换一个 upstream 端口**：`mountRemote` 每次被 Cordis 重新 apply 都新建一个 `superviseSshTunnel`（`localPort` 从 undefined 起、重新 `freePort()`）。日志里 2026-11-26T03:27:50.748Z 起 40 毫秒内 6 次 `apply: upstream=…60477/60483/60488/60491/60494`，而同一秒 `lib/routes.js` 的时间戳正是 11:27:50——即"改插件文件 → 条目重启 → 重建隧道"。于是任何一次改动/配置重载都会把已经指向旧端口的 mux、会话流、请求全部打断。
