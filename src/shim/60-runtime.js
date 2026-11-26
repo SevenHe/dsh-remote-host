@@ -1,7 +1,6 @@
 /**
  * MODULE: 60-runtime.js
- * WebSocket factory, diagnostics sink, group refresh, and the prefetches that make
- * the routing table ready before the client asks.
+ * WebSocket factory, diagnostics sink, group refresh, and the RPC id source.
  */
   /**
    * The carrier hands the factory an absolute mux URL; only that channel is

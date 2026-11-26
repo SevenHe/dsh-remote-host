@@ -15,7 +15,6 @@
   var remoteSessionsRefresh
   var remoteSessionsPoll
   var remoteSessionsInFlight = false
-  var remoteSessionsDigest = null
 
   function scheduleRemoteSessionsRefresh() {
     if (remoteSessionsRefresh !== undefined) return
@@ -34,36 +33,11 @@
     if (remoteSessionsInFlight === true) return
     remoteSessionsInFlight = true
     try {
-      globalThis.fetch(MOUNT + '/api/session/list', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          type: 'client-request',
-          rpcId: nextRpcId(),
-          method: 'session/list',
-          payload: { args: { _request: {} } },
-        }),
-      }).then(function (response) { return response.json() }).then(function (envelope) {
-        var result = envelope === null || typeof envelope !== 'object' ? undefined : envelope.result
-        var value = result === null || typeof result !== 'object' || result.ok !== true ? undefined : result.value
-        var items = value === undefined || value === null ? undefined : value.items
-        if (Array.isArray(items) !== true) return
-        for (var index = 0; index < items.length; index += 1) {
-          if (isActiveRemote(items[index]) === true) remoteSessions.add(items[index].sessionId)
-        }
-        // Announce only when the snapshot really moved, so the block is not asked to
-        // repaint every tick; the digest covers what a row shows.
-        var digest = items.map(function (item) {
-          return String(item === null || item === undefined ? "" : item.sessionId) + ":"
-            + String(item === null || item === undefined ? "" : item.updatedAt) + ":"
-            + (item !== null && item !== undefined && item.running === true ? "1" : "0")
-        }).join(",")
-        if (digest !== remoteSessionsDigest) {
-          remoteSessionsDigest = digest
-          publishRemoteSessions(items)
-          publishRemoteState()
-          refreshGroups()
-        }
+      readMountSessionList().then(function (items) {
+        if (items === undefined) return
+        // The one snapshot path, shared with both unary carriers: it absorbs the ids and
+        // publishes only when a row really moved, so a tick costs no repaint.
+        publishRemoteSessionList(items)
       }).then(function () {
         remoteSessionsInFlight = false
         // The first answer (success or failure) is what the catalogue owner decision waits for.
@@ -615,11 +589,14 @@
           socket = undefined
         }
         if (socket === undefined) {
-          // No carrier: yield, then schedule the next step through the timer.
-          reconnectDepth += 1
+          // No carrier at all: the factory threw or the mount URL could not be resolved, so there
+          // is no socket to wait on. Record the failure, because that clock is what hands the mux
+          // back; a ladder that only re-entered here retried a dead carrier forever and the shipped
+          // client never learned the remote leg was gone. The retry goes through the backoff timer
+          // inside reconnectRemote, never a synchronous re-entry.
           traceEvent('reconnect-nocarrier', { attempt: reconnectAttempts, depth: reconnectDepth })
-          reconnectDepth -= 1
-          reconnectRemote()
+          noteRemoteUnavailable('no-carrier')
+          if (degraded !== true) reconnectRemote()
           return
         }
         if (attemptTimer !== undefined) {

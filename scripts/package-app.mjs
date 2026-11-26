@@ -22,6 +22,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdir
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isPnpmCommand, pnpmMissingMessage, resolvePnpm } from './lib/pnpm.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
@@ -61,11 +62,25 @@ function run(argv, options = {}) {
     return ''
   }
   console.log('  $ ' + printable)
-  if (options.capture !== true) return execFileSync(flat[0], flat.slice(1), { cwd: options.cwd, encoding: 'utf8', stdio: 'inherit' })
-  // Captured stdout is echoed afterwards; stderr stays a live stream so failures show as they happen.
-  const output = execFileSync(flat[0], flat.slice(1), { cwd: options.cwd, encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'], maxBuffer: 64 * 1024 * 1024 })
-  process.stdout.write(output)
-  return output
+  try {
+    if (options.capture !== true) return execFileSync(flat[0], flat.slice(1), { cwd: options.cwd, encoding: 'utf8', stdio: 'inherit' })
+    // Captured stdout is echoed afterwards; stderr stays a live stream so failures show as they happen.
+    const output = execFileSync(flat[0], flat.slice(1), { cwd: options.cwd, encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'], maxBuffer: 64 * 1024 * 1024 })
+    process.stdout.write(output)
+    return output
+  } catch (error) {
+    // A missing executable is a setup problem, not a build failure: name the command the operator
+    // has to install instead of surfacing a stack whose first line is "spawnSync <cmd> ENOENT".
+    if (error?.code === 'ENOENT') fail('cannot run ' + flat[0] + ': executable not found' + (isPnpmCommand(flat[0]) ? '; ' + pnpmMissingMessage() : ''))
+    throw error
+  }
+}
+
+/** The pnpm this run has to drive; the message names both ways out instead of a spawn stack. */
+function requirePnpm(cwd) {
+  const found = resolvePnpm({ cwd })
+  if (found === undefined) fail(pnpmMissingMessage())
+  return found
 }
 
 /** Count binary occurrences without pulling the whole 200 MB asar into a string. */
@@ -93,6 +108,13 @@ function plistVersion(appDir) {
   } catch (error) { return 'unknown' }
 }
 
+/** Detach a temporary mount and delete the directory mkdtempSync created for it. */
+function detachMount(mountPoint) {
+  execFileSync('hdiutil', ['detach', mountPoint], { stdio: 'pipe' })
+  // hdiutil leaves the (now empty) mount point behind; it is ours, so it goes with the mount.
+  rmSync(mountPoint, { recursive: true, force: true })
+}
+
 /** The app bundle inside a dmg, an .app, or an app.asar. */
 function locateAsar(target) {
   const path = resolve(target)
@@ -108,12 +130,12 @@ function locateAsar(target) {
   execFileSync('hdiutil', ['attach', '-nobrowse', '-readonly', '-mountpoint', mountPoint, path], { stdio: 'pipe' })
   const app = readdirSync(mountPoint).filter((name) => name.endsWith('.app')).map((name) => join(mountPoint, name))[0]
   if (app === undefined) {
-    execFileSync('hdiutil', ['detach', mountPoint], { stdio: 'pipe' })
+    detachMount(mountPoint)
     fail('no .app inside ' + path)
   }
   const asar = join(app, 'Contents/Resources/app.asar')
   if (!existsSync(asar)) {
-    execFileSync('hdiutil', ['detach', mountPoint], { stdio: 'pipe' })
+    detachMount(mountPoint)
     fail('no app.asar inside ' + app)
   }
   return { asar, app, mounted: mountPoint }
@@ -140,7 +162,7 @@ function verify(target, { quiet = false } = {}) {
     if (quiet !== true) console.log('  verdict    OK')
     return { version, marker, storeFor, asar: found.asar, app: found.app }
   } finally {
-    if (found.mounted !== undefined) execFileSync('hdiutil', ['detach', found.mounted], { stdio: 'pipe' })
+    if (found.mounted !== undefined) detachMount(found.mounted)
   }
 }
 
@@ -173,15 +195,18 @@ function packageApp() {
   }
 
   console.log('== 2/4 build ==')
-  if (skipInstall !== true) run(['pnpm', ['install', '--ignore-scripts']], { cwd: repo, dryRun })
-  run(['pnpm', ['run', 'build']], { cwd: repo, dryRun })
+  // A dry run only prints, so it must work on a machine without pnpm; a real run resolves the
+  // executable once, up front, so every build step calls the same one.
+  const pnpm = dryRun ? 'pnpm' : requirePnpm(repo)
+  if (skipInstall !== true) run([pnpm, ['install', '--ignore-scripts']], { cwd: repo, dryRun })
+  run([pnpm, ['run', 'build']], { cwd: repo, dryRun })
   // The packaging step below prepares the runtime itself: `build --profile local`, pack,
   // prepare:runtime, prepare:packages and prepare:dsh. `prepare:desktop` is the release
   // `--prepare-only` mode instead: it reads apps/desktop/.env.macos release settings and
   // refuses to run without that file, which a local unsigned build neither has nor needs.
 
   console.log('== 3/4 package (unsigned dmg) ==')
-  const packOutput = run(['pnpm', ['run', 'package:desktop:mac:arm64:unsigned']], { cwd: repo, dryRun, capture: true })
+  const packOutput = run([pnpm, ['run', 'package:desktop:mac:arm64:unsigned']], { cwd: repo, dryRun, capture: true })
 
   if (dryRun) {
     console.log('')

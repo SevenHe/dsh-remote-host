@@ -13,10 +13,11 @@
  *
  * Requires Node >= 22 for the built-in WebSocket. Never hardcodes a machine path.
  */
-import { createHash, createHmac } from "node:crypto"
 import { readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { Cdp, listPageTargets } from "./lib/cdp.mjs"
+import { assertCookieVersion, mintAuthCookie } from "./lib/cookie.mjs"
 
 const HELP = [
   "usage: node scripts/parity-snapshot.mjs --port <labPort> [--cdp <cdpPort>] [options]",
@@ -33,7 +34,6 @@ const HELP = [
 ].join("\n")
 
 const BLOCK = "#drh-remote-block"
-const SURFACE = ".drh-menuSurface"
 
 function fail (message) {
   process.stderr.write("parity-snapshot: " + message + "\n")
@@ -69,17 +69,18 @@ function parseArgs (argv) {
 }
 
 // ---------------------------------------------------------------------------
-// dsh-auth cookie: the Host mints it from a persistent signing secret.
-// Derivation verified against the shipping dsh-client-connection bundle:
-//   name  = "dsh-auth-" + b64url(sha256(authority))
-//   value = "v1." + b64url(JSON{version,authority,issuedAt,expiresAt}) + "." + b64url(hmacSha256(secret, body))
-// Read-only: this only mints a cookie for a port the caller already owns.
+// dsh-auth cookie: the Host mints it from a persistent signing secret. The derivation and the
+// window live in scripts/lib/cookie.mjs, shared with scripts/setup.mjs, because the two entry
+// points used to disagree about both. Read-only: this only mints a cookie for a port the caller
+// already owns.
 // ---------------------------------------------------------------------------
-function b64url (buf) {
-  return Buffer.from(buf).toString("base64").replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "")
-}
 
-function readBrowserSessionSecret (credentialsPath) {
+/**
+ * Read the browser-session grant out of the Host's credentials file.
+ * @param credentialsPath - path to the remote `.credentials.yaml`.
+ * @returns The grant's version and base64url secret, or undefined when the file has no grant.
+ */
+function readBrowserSessionGrant (credentialsPath) {
   let text
   try { text = readFileSync(credentialsPath, "utf8") } catch { return undefined }
   const lines = text.split(/\r?\n/u)
@@ -90,123 +91,22 @@ function readBrowserSessionSecret (credentialsPath) {
     if (inRecords !== true) continue
     if (/^\S/u.test(line)) { inRecords = false; continue }
     if (/^\s+["\x27]?client-connection\/browser-session["\x27]?:\s*$/u.test(line) !== true) continue
+    let version
+    let secret
+    // The record's fields are indented deeper than its own line; the loop stops at the next record.
     for (let j = i + 1; j < lines.length; j += 1) {
       const inner = lines[j]
       if (/^\s{0,2}\S/u.test(inner)) break
-      const match = /^\s+secret:\s*([A-Za-z0-9_-]+)\s*$/u.exec(inner)
-      if (match !== null) return match[1]
+      const secretMatch = /^\s+secret:\s*([A-Za-z0-9_-]+)\s*$/u.exec(inner)
+      if (secretMatch !== null) secret = secretMatch[1]
+      const versionMatch = /^\s+version:\s*(\d+)\s*$/u.exec(inner)
+      if (versionMatch !== null) version = Number(versionMatch[1])
     }
+    if (secret !== undefined) return { version, secret }
   }
   return undefined
 }
 
-function mintAuthCookie (authority, secretB64u) {
-  const secret = Buffer.from(secretB64u.replaceAll("-", "+").replaceAll("_", "/"), "base64")
-  if (secret.byteLength !== 32) throw new Error("browser-session secret is not 32 bytes")
-  const now = Date.now()
-  const payload = { version: 1, authority, issuedAt: now, expiresAt: now + 7 * 24 * 60 * 60 * 1000 }
-  const body = b64url(Buffer.from(JSON.stringify(payload), "utf8"))
-  const signature = b64url(createHmac("sha256", secret).update(body).digest())
-  return { name: "dsh-auth-" + b64url(createHash("sha256").update(authority).digest()), value: "v1." + body + "." + signature }
-}
-
-// ---------------------------------------------------------------------------
-// Minimal CDP client over the page debugger WebSocket (one message at a time).
-// ---------------------------------------------------------------------------
-class Cdp {
-  constructor (socket) {
-    this.socket = socket
-    this.nextId = 1
-    this.pending = new Map()
-    socket.addEventListener("message", (event) => {
-      let frame
-      try { frame = JSON.parse(event.data) } catch { return }
-      if (frame.id === undefined) return
-      const entry = this.pending.get(frame.id)
-      if (entry === undefined) return
-      this.pending.delete(frame.id)
-      if (frame.error !== undefined) entry.reject(new Error(entry.method + ": " + JSON.stringify(frame.error)))
-      else entry.resolve(frame.result)
-    })
-    socket.addEventListener("close", () => {
-      for (const entry of this.pending.values()) entry.reject(new Error("cdp socket closed"))
-      this.pending.clear()
-    })
-  }
-
-  static async connect (cdpPort) {
-    if (typeof globalThis.WebSocket !== "function") fail("Node >= 22 is required (global WebSocket)")
-    let targets
-    try {
-      const response = await fetch("http://127.0.0.1:" + cdpPort + "/json/list")
-      targets = await response.json()
-    } catch (error) {
-      fail("cannot reach CDP on 127.0.0.1:" + cdpPort + " (" + String(error) + "). Launch the app or Chrome with --remote-debugging-port=" + cdpPort)
-    }
-    const pages = (Array.isArray(targets) ? targets : []).filter((t) => t.type === "page" && typeof t.webSocketDebuggerUrl === "string")
-    if (pages.length === 0) fail("no page target on CDP " + cdpPort)
-    return { pages }
-  }
-
-  static open (url) {
-    return new Promise((resolve, reject) => {
-      const socket = new WebSocket(url)
-      socket.addEventListener("open", () => resolve(new Cdp(socket)))
-      socket.addEventListener("error", () => reject(new Error("cdp websocket error")))
-    })
-  }
-
-  send (method, params) {
-    const id = this.nextId
-    this.nextId += 1
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, method })
-      this.socket.send(JSON.stringify({ id, method, params: params === undefined ? {} : params }))
-    })
-  }
-
-  async evaluate (expression) {
-    const result = await this.send("Runtime.evaluate", {
-      expression, returnByValue: true, awaitPromise: true, userGesture: true,
-    })
-    if (result.exceptionDetails !== undefined) {
-      const detail = result.exceptionDetails.exception === undefined ? result.exceptionDetails.text : result.exceptionDetails.exception.description
-      throw new Error("evaluate failed: " + String(detail))
-    }
-    return result.result === undefined ? undefined : result.result.value
-  }
-
-  async call (fn) {
-    return await this.evaluate("(" + fn.toString() + ")()")
-  }
-
-  async waitFor (fn, timeoutMs) {
-    const deadline = Date.now() + (timeoutMs === undefined ? 5000 : timeoutMs)
-    for (;;) {
-      const value = await this.call(fn)
-      if (value !== null && value !== undefined && value !== false) return value
-      if (Date.now() > deadline) return null
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    }
-  }
-
-  async mouseMove (x, y) {
-    await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none", buttons: 0 })
-  }
-
-  async click (x, y) {
-    await this.mouseMove(x, y)
-    await this.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1 })
-    await this.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", buttons: 0, clickCount: 1 })
-  }
-
-  async escape () {
-    await this.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 })
-    await this.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 })
-  }
-
-  close () { try { this.socket.close() } catch { /* already closed */ } }
-}
 // ---------------------------------------------------------------------------
 // Page-side probes. Each is serialized with toString() and evaluated in the page,
 // so it must not close over Node scope and must read only the live render tree.
@@ -272,14 +172,6 @@ const pageScrollIntoView = (selector) => {
 
 /** Whether a session row is rendered (a group is expanded). */
 const pageHasSessionRow = () => document.querySelector('#drh-remote-block [data-drh-session]') !== null
-
-/** Click one element by selector through the page, for triggers a pointer cannot reach. */
-const pageClickSelector = (selector) => {
-  const el = document.querySelector(selector)
-  if (el === null) return false
-  el.click()
-  return true
-}
 
 const pageCenter = (selector) => {
   const el = document.querySelector(selector)
@@ -582,9 +474,9 @@ async function main () {
     // Exercise the credential reader without printing the secret, so a broken
     // parser shows up here instead of as a mystery 401 later.
     const selfTestSecretPath = options.secretFile ?? join(options.home, ".dsh", ".credentials.yaml")
-    const selfTestSecret = readBrowserSessionSecret(selfTestSecretPath)
-    snapshot.meta.secretFound = selfTestSecret !== undefined
-    snapshot.meta.notes.push(selfTestSecret === undefined
+    const selfTestGrant = readBrowserSessionGrant(selfTestSecretPath)
+    snapshot.meta.secretFound = selfTestGrant !== undefined
+    snapshot.meta.notes.push(selfTestGrant === undefined
       ? "no browser-session secret in " + selfTestSecretPath
       : "browser-session secret found in " + selfTestSecretPath + " (value not printed)")
     emit(snapshot, options)
@@ -595,7 +487,13 @@ async function main () {
   const authority = "127.0.0.1:" + options.port
   snapshot.meta.labOrigin = origin
 
-  const { pages } = await Cdp.connect(options.cdp)
+  let pages
+  try {
+    pages = await listPageTargets(options.cdp)
+  } catch (error) {
+    fail("cannot reach CDP on 127.0.0.1:" + options.cdp + " (" + String(error) + "). Launch the app or Chrome with --remote-debugging-port=" + options.cdp)
+  }
+  if (pages.length === 0) fail("no page target on CDP " + options.cdp)
   const target = pages.find((page) => String(page.url).startsWith(origin)) ?? pages[0]
   process.stderr.write("parity-snapshot: target " + String(target.url) + "\n")
 
@@ -615,12 +513,14 @@ async function main () {
 
     if (options.cookie === true) {
       const secretPath = options.secretFile ?? join(options.home, ".dsh", ".credentials.yaml")
-      const secret = readBrowserSessionSecret(secretPath)
-      if (secret === undefined) {
+      const grant = readBrowserSessionGrant(secretPath)
+      if (grant === undefined) {
         snapshot.meta.notes.push("no browser-session secret in " + secretPath + "; relying on the page existing session")
       } else {
         try {
-          const cookie = mintAuthCookie(authority, secret)
+          // Same version check as scripts/setup.mjs: a grant we would mis-sign is reported, not minted.
+          assertCookieVersion(grant.version, secretPath)
+          const cookie = mintAuthCookie({ authority, secretB64u: grant.secret })
           await cdp.send("Network.setCookie", { name: cookie.name, value: cookie.value, url: origin + "/", path: "/" })
           snapshot.meta.cookieSet = true
         } catch (error) {

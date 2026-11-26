@@ -69,29 +69,33 @@ const BANNER = [
 
 test('credential mint: the entry URL is the last token URL in the Host banner', async () => {
   await withFakeSsh({ banner: BANNER }, async ({ argsFile }) => {
-    const url = readEntryUrl({ sshHost: 'devbox', tmuxSession: 'dsh-main' })
+    // readEntryUrl is async so a stalled ssh cannot block the host event loop.
+    const url = await readEntryUrl({ sshHost: 'devbox', tmuxSession: 'dsh-main' })
     assert.equal(url, 'http://127.0.0.1:3080/?token=fresh_token-2', 'the newest banner line wins')
     const argv = readFileSync(argsFile, 'utf8').trim().split('\n')
     assert.ok(argv.includes('BatchMode=yes'), 'the banner read is non-interactive: ' + JSON.stringify(argv))
     const command = argv[argv.length - 1]
     assert.equal(command.includes('tmux capture-pane'), true, 'the banner comes from tmux: ' + JSON.stringify(argv))
-    assert.equal(command.includes('"dsh-main"'), true, 'the asked-for session is quoted into the command: ' + JSON.stringify(argv))
+    // The pane name is single-quoted so the remote shell cannot expand anything inside it.
+    assert.equal(command.includes("'dsh-main'"), true, 'the asked-for session is quoted into the command: ' + JSON.stringify(argv))
   })
 })
 
 test('credential mint: an unreachable Host surfaces as an ssh failure, not a parse failure', async () => {
-  await withFakeSsh({ banner: '', status: 255 }, () => {
-    assert.throws(
-      () => readEntryUrl({ sshHost: 'devbox', tmuxSession: 'dsh-main' }),
+  // Async now: the same ssh failure surfaces as a rejection, with the same message.
+  await withFakeSsh({ banner: '', status: 255 }, async () => {
+    await assert.rejects(
+      readEntryUrl({ sshHost: 'devbox', tmuxSession: 'dsh-main' }),
       /cannot read the Host banner over ssh/,
     )
   })
 })
 
 test('credential mint: a banner without an entry URL names the pane it read', async () => {
-  await withFakeSsh({ banner: 'dsh web: listening on port 3080\nno token here\n' }, () => {
-    assert.throws(
-      () => readEntryUrl({ sshHost: 'devbox', tmuxSession: 'dsh-main' }),
+  // Async now: a missing entry URL rejects instead of throwing.
+  await withFakeSsh({ banner: 'dsh web: listening on port 3080\nno token here\n' }, async () => {
+    await assert.rejects(
+      readEntryUrl({ sshHost: 'devbox', tmuxSession: 'dsh-main' }),
       /no "dsh web: http\.\.\.\?token=" banner in dsh-main/,
     )
   })

@@ -1,8 +1,15 @@
 /**
  * MODULE: 00-config.js
- * Configuration and the shared mutable state of this shim: the mount point, the
- * remote id/workspace registries, and the flags read once at install time.
+ * Configuration and the shared mutable state of this shim: the mount point, the flags read
+ * once at install time, the remote id/workspace registries, what the shim publishes from
+ * them, and the event bookkeeping that keeps remote waterfalls answerable.
  */
+  /**
+   * Strict mode for the whole assembled script: the modules are concatenated into one IIFE, so
+   * a directive at the top of the first module governs all of them. Worth having because an
+   * implicit global created by a typo would otherwise stay invisible in this shared scope.
+   */
+  'use strict'
   var config = globalThis.__DSH_REMOTE_HOST__
   if (config === null || typeof config !== 'object' || typeof config.mount !== 'string') return
   var MOUNT = config.mount
@@ -50,6 +57,14 @@
   var previous = globalThis.__DSH_TRANSPORT__ || {}
   /** Captured before any patching, so the router can still open real sockets. */
   var NativeWebSocket = globalThis.WebSocket
+  /**
+   * Timer bound to the page global, declared before any module that schedules.
+   *
+   * The modules share one scope, so a var assigned at the end of the assembled file would
+   * still resolve here through hoisting and read as uninitialised: declaring it first keeps
+   * every scheduling module honest about when it exists.
+   */
+  var schedule = typeof globalThis.setTimeout === 'function' ? globalThis.setTimeout.bind(globalThis) : undefined
   var remoteSessions = new Set()
   /**
    * When a remote Session was last the page's focus.

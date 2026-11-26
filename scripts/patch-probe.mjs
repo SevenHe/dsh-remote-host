@@ -16,6 +16,8 @@
  *     nested means a node was patched in place. The container-level count is the discriminator,
  *     because a patch also produces a nested mutation (the state dot is a child of the row).
  */
+import { Cdp, listPageTargets } from "./lib/cdp.mjs"
+
 const options = { cdp: 9222, url: "" }
 
 function fail (message) {
@@ -23,68 +25,12 @@ function fail (message) {
   process.exit(1)
 }
 
-class Cdp {
-  constructor (socket) {
-    this.socket = socket
-    this.nextId = 1
-    this.pending = new Map()
-    socket.addEventListener("message", (event) => {
-      let frame
-      try { frame = JSON.parse(event.data) } catch { return }
-      if (frame.id === undefined) return
-      const entry = this.pending.get(frame.id)
-      if (entry === undefined) return
-      this.pending.delete(frame.id)
-      if (frame.error !== undefined) entry.reject(new Error(entry.method + ": " + JSON.stringify(frame.error)))
-      else entry.resolve(frame.result)
-    })
-  }
-
-  send (method, params) {
-    const id = this.nextId
-    this.nextId += 1
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, method })
-      this.socket.send(JSON.stringify({ id, method, params: params === undefined ? {} : params }))
-    })
-  }
-
-  async evaluate (expression) {
-    const result = await this.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true, userGesture: true })
-    if (result.exceptionDetails !== undefined) {
-      const exception = result.exceptionDetails.exception
-      throw new Error("evaluate failed: " + String(exception === undefined ? result.exceptionDetails.text : exception.description))
-    }
-    return result.result.value
-  }
-
-  async click (x, y) {
-    const point = { x, y, button: "left", clickCount: 1 }
-    await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" })
-    await this.send("Input.dispatchMouseEvent", Object.assign({ type: "mousePressed" }, point))
-    await this.send("Input.dispatchMouseEvent", Object.assign({ type: "mouseReleased" }, point))
-  }
-
-  async escape () {
-    const key = { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 }
-    await this.send("Input.dispatchKeyEvent", Object.assign({ type: "keyDown" }, key))
-    await this.send("Input.dispatchKeyEvent", Object.assign({ type: "keyUp" }, key))
-  }
-}
-
 async function connect () {
-  const response = await fetch("http://127.0.0.1:" + options.cdp + "/json/list")
-  const targets = await response.json()
-  const pages = (Array.isArray(targets) ? targets : []).filter((t) => t.type === "page" && typeof t.webSocketDebuggerUrl === "string")
+  const pages = await listPageTargets(options.cdp)
   if (pages.length === 0) fail("no page target on CDP " + options.cdp)
   const page = options.url.length > 0 ? pages.find((t) => t.url.indexOf(options.url) !== -1) : pages[0]
   if (page === undefined) fail("no page target matching " + options.url)
-  const socket = new WebSocket(page.webSocketDebuggerUrl)
-  await new Promise((resolve, reject) => {
-    socket.addEventListener("open", resolve)
-    socket.addEventListener("error", () => reject(new Error("cdp socket error")))
-  })
-  return new Cdp(socket)
+  return await Cdp.open(page.webSocketDebuggerUrl)
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
