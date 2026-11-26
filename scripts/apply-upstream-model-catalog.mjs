@@ -24,7 +24,11 @@ import { fileURLToPath } from 'node:url'
 import { pnpmMissingMessage, resolvePnpm } from './lib/pnpm.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const PATCH = join(HERE, 'patches', 'modelcatalog.patch')
+/** Upstream patches, applied in order. Each is version-locked to the revision below. */
+const PATCHES = [
+  join(HERE, 'patches', 'modelcatalog.patch'),
+  join(HERE, 'patches', 'hidden-sessions.patch'),
+]
 /** The upstream revision this patch was written against. */
 const BASE_TAG = 'dsh-v0.2.3-alpha.2'
 const BASE_COMMIT = '4b399c39a6d1479cd84ca591b4d7c88e24d38a96'
@@ -65,16 +69,16 @@ const rawRepo = argOf('repo', '')
 if (rawRepo.length === 0) fail('--repo <path to a deepseek-harness clone> is required')
 const repo = resolve(rawRepo.replace(/^~(?=$|\/)/, process.env.HOME ?? '~'))
 if (existsSync(repo) !== true) fail('repo not found: ' + repo)
-if (existsSync(PATCH) !== true) fail('patch missing: ' + PATCH)
+for (const patch of PATCHES) if (existsSync(patch) !== true) fail('patch missing: ' + patch)
 
 if (existsSync(join(repo, '.git')) !== true) fail('not a git checkout: ' + repo)
 
 console.log('repo    : ' + repo)
-console.log('patch   : ' + PATCH + ' (' + String(readFileSync(PATCH, 'utf8').length) + ' bytes)')
+for (const patch of PATCHES) console.log('patch   : ' + patch + ' (' + String(readFileSync(patch, 'utf8').length) + ' bytes)')
 
 // Applied already?
 const porcelain = git(repo, ['status', '--porcelain'])
-if (porcelain.indexOf('ui-model-selection') !== -1) {
+if (porcelain.indexOf('ui-model-selection') !== -1 || porcelain.indexOf('ui-workspace') !== -1) {
   console.log('note    : the working tree already has model-selection changes; refusing to stack patches')
   fail('dirty tree on ui-model-selection — commit, stash or reset first')
 }
@@ -100,11 +104,13 @@ if (head !== BASE_COMMIT) {
   if (head !== BASE_COMMIT) fail('resolved ' + BASE_TAG + ' to ' + head + ', expected ' + BASE_COMMIT)
 }
 
-console.log('apply   : git apply --3way')
-try {
-  git(repo, ['apply', '--3way', PATCH])
-} catch (error) {
-  fail('patch did not apply: ' + String(error && error.message ? error.message : error))
+for (const patch of PATCHES) {
+  console.log('apply   : git apply --3way ' + patch)
+  try {
+    git(repo, ['apply', '--3way', patch])
+  } catch (error) {
+    fail('patch did not apply: ' + patch + ': ' + String(error && error.message ? error.message : error))
+  }
 }
 
 const touched = git(repo, ['status', '--porcelain']).split('\n').filter((line) => line.trim().length > 0)
