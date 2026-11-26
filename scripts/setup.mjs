@@ -13,10 +13,10 @@
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, symlinkSync, unlinkSync, chmodSync } from 'node:fs'
-import { createHash, createHmac } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { assertCookieVersion, COOKIE_NAME_PREFIX, mintAuthCookie } from './lib/cookie.mjs'
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const PACKAGE_NAME = 'dsh-remote-host'
@@ -40,10 +40,13 @@ const upstreamUrl = new URL(upstream)
 const authority = flag('authority', upstreamUrl.host)
 const cookieFile = join(homedir(), '.dsh', PACKAGE_NAME, 'cookie.txt')
 
-const b64u = (buffer) => Buffer.from(buffer).toString('base64').replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
-
-/** Mint the v1 browser cookie the remote Host would have issued itself. */
-function mintCookie(credentialsText) {
+/**
+ * Mint the browser cookie the remote Host would have issued itself.
+ * @param credentialsText - the remote `.credentials.yaml` contents.
+ * @param source - path the credentials came from; quoted when the grant is unusable.
+ * @returns One `name=value` cookie pair.
+ */
+function mintCookie(credentialsText, source) {
   const lines = credentialsText.split('\n')
   let inRecord = false
   let version = null
@@ -57,21 +60,19 @@ function mintCookie(credentialsText) {
     const secretMatch = /^\s+secret:\s*(\S+)\s*$/.exec(line)
     if (secretMatch !== null) secret = secretMatch[1]
   }
-  if (secret === null || version !== 1) throw new Error('credentials file has no client-connection/browser-session grant')
-  const key = Buffer.from(secret.replaceAll('-', '+').replaceAll('_', '/'), 'base64')
-  if (key.byteLength !== 32) throw new Error('unexpected signing secret length')
-  const issuedAt = Date.now()
-  const payload = { version: 1, authority, issuedAt, expiresAt: issuedAt + 30 * 24 * 3600 * 1000 }
-  const body = b64u(Buffer.from(JSON.stringify(payload), 'utf8'))
-  const name = 'dsh-auth-' + b64u(createHash('sha256').update(authority).digest())
-  return name + '=v1.' + body + '.' + b64u(createHmac('sha256', key).update(body).digest())
+  if (secret === null) throw new Error('no client-connection/browser-session grant in ' + source)
+  // The grant version and the payload version have to agree; the shared constant is the only place
+  // either side may change, so this check cannot disagree with what the mint writes.
+  assertCookieVersion(version, source)
+  const { name, value } = mintAuthCookie({ authority, secretB64u: secret })
+  return name + '=' + value
 }
 
 /** Exchange the remote's printed entry URL for the same cookie, through its own fence. */
 async function exchangeToken(entry) {
   const response = await fetch(new URL(entry), { redirect: 'manual', headers: { host: authority } })
   const setCookie = response.headers.getSetCookie?.() ?? []
-  const cookie = setCookie.map((value) => value.split(';')[0]).find((value) => value.startsWith('dsh-auth-'))
+  const cookie = setCookie.map((value) => value.split(';')[0]).find((value) => value.startsWith(COOKIE_NAME_PREFIX))
   if (cookie === undefined) throw new Error('entry URL did not return an authentication cookie (status ' + String(response.status) + ')')
   return cookie
 }
@@ -141,11 +142,12 @@ function install(profileDir) {
 
 const tokenEntry = flag('token', undefined)
 const sshHost = flag('ssh', undefined)
+const credentialsPath = flag('remote-home', '~/.dsh') + '/.credentials.yaml'
 const credentialsText = tokenEntry === undefined && sshHost !== undefined
-  ? execFileSync('ssh', ['-o', 'BatchMode=yes', sshHost, 'cat', flag('remote-home', '~/.dsh') + '/.credentials.yaml'], { encoding: 'utf8' })
+  ? execFileSync('ssh', ['-o', 'BatchMode=yes', sshHost, 'cat', credentialsPath], { encoding: 'utf8' })
   : undefined
 
-const cookie = credentialsText !== undefined ? mintCookie(credentialsText) : await exchangeToken(tokenEntry)
+const cookie = credentialsText !== undefined ? mintCookie(credentialsText, credentialsPath) : await exchangeToken(tokenEntry)
 const bytes = await verify(cookie)
 mkdirSync(dirname(cookieFile), { recursive: true, mode: 0o700 })
 writeFileSync(cookieFile, cookie + '\n', { mode: 0o600 })

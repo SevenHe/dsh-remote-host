@@ -7,15 +7,21 @@
  * cookie silently expires whenever the Host restarts. This script reads the token the Host
  * printed, exchanges it for that credential, and stores it where the caller needs it.
  *
+ * The mint itself lives in lib/credential-mint.js because the Host-side pump re-mints the same
+ * credential; this entry point only adds the CLI surface (--open, doctor) on top of it. Keeping one
+ * implementation is what makes the stored file mode and the ssh timeout identical on both paths.
+ *
  *   node scripts/remote-access.mjs url --ssh devbox [--open]
  *   node scripts/remote-access.mjs refresh-cookie --ssh devbox
+ *   node scripts/remote-access.mjs doctor --authority devbox.example.com:3080
  *
  * @module
  */
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
+import { expandPath, refreshCredential } from '../lib/credential-mint.js'
 
 const args = process.argv.slice(2)
 const command = args[0] !== undefined && args[0].startsWith('--') !== true ? args[0] : 'url'
@@ -30,72 +36,13 @@ function fail(message) {
   process.exit(1)
 }
 
-/** Expand a leading ~ against this machine's home directory. */
-const expand = (path) => path.replace(/^~(?=$|\/)/, homedir())
-
-/**
- * Read the entry URL the Host printed at startup: the credential lives only there.
- * @param sshHost - Host alias reachable with the user's existing SSH setup.
- * @param tmuxSession - Session whose scrollback carries the startup banner.
- * @returns The entry URL including its token query parameter.
- */
-function readEntryUrl(sshHost, tmuxSession) {
-  const remote = [
-    'tmux capture-pane -p -S -4000 -t ' + JSON.stringify(tmuxSession) + ' 2>/dev/null',
-  ].join(' || ')
-  let output
-  try {
-    output = execFileSync('ssh', ['-o', 'BatchMode=yes', '-T', sshHost, remote], { encoding: 'utf8' })
-  } catch (error) {
-    fail('could not read the Host startup banner over ssh: ' + String(error))
-  }
-  const entry = [...output.matchAll(/(https?:\/\/\S+?\?token=[A-Za-z0-9_-]+)/gu)].pop()
-  if (entry === undefined) fail('no "dsh web: http...?token=" line found in ' + tmuxSession)
-  return entry[1]
-}
-
-/**
- * Exchange the entry token for the mux/API credential the Host issues at /connect.
- * @param entryUrl - Entry URL carrying the token.
- * @returns One `name=value` cookie pair.
- */
-async function mintCredential(entryUrl) {
-  const url = new URL(entryUrl)
-  const connect = new URL('/connect', url.origin)
-  connect.searchParams.set('token', url.searchParams.get('token') ?? '')
-  connect.searchParams.set('interactions', 'none')
-  const response = await fetch(connect, { redirect: 'manual' })
-  const cookies = typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : []
-  const pair = cookies.map((value) => value.split(';')[0].trim()).filter((value) => value.includes('='))
-  if (pair.length === 0) fail('the Host returned no credential (HTTP ' + String(response.status) + ')')
-  return pair.join('; ')
-}
-
-/**
- * Store the credential where the configured reader expects it, keeping the previous one.
- * @param cookieFile - Destination file.
- * @param credential - Cookie pairs to write.
- * @returns The backup path, when a previous credential existed.
- */
-function storeCredential(cookieFile, credential) {
-  mkdirSync(dirname(cookieFile), { recursive: true })
-  let backup
-  if (existsSync(cookieFile)) {
-    backup = cookieFile + '.bak-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    copyFileSync(cookieFile, backup)
-  }
-  writeFileSync(cookieFile, credential + '\n', { mode: 0o600 })
-  return backup
-}
-
-
 /**
  * Check the credential chain the page depends on and print one verdict per hop.
- * @param options - cookie file, remote authority, and the ssh hop used to re-mint.
+ * @param options - `sshHost` used to name the re-mint command in the report.
  * @returns Nothing; failures exit non-zero after printing what to do.
  */
 async function doctor(options) {
-  const cookieFile = expand(argOf('cookie-file', join(homedir(), '.dsh', 'dsh-remote-host', 'cookie.txt')))
+  const cookieFile = expandPath(argOf('cookie-file', join(homedir(), '.dsh', 'dsh-remote-host', 'cookie.txt')))
   const authority = argOf('authority', '')
   const problems = []
   console.log('cookie file : ' + cookieFile)
@@ -121,7 +68,7 @@ async function doctor(options) {
 
 const sshHost = argOf('ssh', 'devbox')
 const tmuxSession = argOf('tmux-session', 'dsh-superagent')
-const cookieFile = expand(argOf('cookie-file', join(homedir(), '.dsh', 'dsh-remote-host', 'cookie.txt')))
+const cookieFile = expandPath(argOf('cookie-file', join(homedir(), '.dsh', 'dsh-remote-host', 'cookie.txt')))
 
 if (command === 'doctor') {
   await doctor({ sshHost })
@@ -132,16 +79,21 @@ if (command !== 'url' && command !== 'refresh-cookie') {
   fail('unknown command: ' + command + ' (url | refresh-cookie | doctor)')
 }
 
-const entryUrl = readEntryUrl(sshHost, tmuxSession)
-const credential = await mintCredential(entryUrl)
-const backup = storeCredential(cookieFile, credential)
-const url = new URL(entryUrl)
+let refreshed
+try {
+  refreshed = await refreshCredential({ sshHost, tmuxSession, cookieFile })
+} catch (error) {
+  // The mint already names the failing hop and the Host's status; this entry point only owns the
+  // CLI prefix, so the operator sees one actionable line instead of a stack.
+  fail(error instanceof Error ? error.message : String(error))
+}
+const url = new URL(refreshed.entryUrl)
 
 console.log('host     : ' + url.origin)
-console.log('entry    : ' + entryUrl)
-console.log('cookie   : ' + cookieFile + ' (' + String(credential.length) + ' chars)')
-if (backup !== undefined) console.log('previous : ' + backup)
+console.log('entry    : ' + refreshed.entryUrl)
+console.log('cookie   : ' + refreshed.cookieFile + ' (' + String(refreshed.length) + ' chars)')
+if (refreshed.backup !== undefined) console.log('previous : ' + refreshed.backup)
 if (command === 'url' && has('open') === true) {
-  execFileSync('open', [entryUrl], { stdio: 'ignore' })
+  execFileSync('open', [refreshed.entryUrl], { stdio: 'ignore' })
   console.log('opened   : yes')
 }

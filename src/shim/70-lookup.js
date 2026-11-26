@@ -1,8 +1,32 @@
 /**
  * MODULE: 70-lookup.js
- * Unary call handling: the session-list merge and the event-answer rewrite that
- * sends a remote waterfall answer back to the remote peer.
+ * The prefetches that fill the routing table before the client asks, the one unary call
+ * against the mount, the session-list merge both carriers share, and the diagnostics refresh.
  */
+  /**
+   * Read the mount's Session list.
+   *
+   * The poll and the boot prefetch ask exactly this question, so it is asked here once. Two
+   * hand-written copies of the request and its decoding are what let one of them drift.
+   * @returns a promise of the rows, or of undefined when the answer carries none.
+   */
+  function readMountSessionList() {
+    return globalThis.fetch(MOUNT + '/api/session/list', mountRequestInit('session/list', { args: { _request: {} } }))
+      .then(function (response) { return response.json() })
+      .then(function (envelope) { return sessionItemsOf(mountResult(envelope)) })
+  }
+
+  /**
+   * The rows one decoded mount result carries.
+   * @param result - the decoded carrier result.
+   * @returns the items array, or undefined when the answer carries none.
+   */
+  function sessionItemsOf(result) {
+    var value = result === undefined ? undefined : result.value
+    var items = value === null || typeof value !== 'object' ? undefined : value.items
+    return Array.isArray(items) === true ? items : undefined
+  }
+
   /**
    * Populate the routing table before the client asks for anything. The client
    * restores the previously selected Session during boot, which can precede the
@@ -10,34 +34,13 @@
    */
   function prefetchRemoteSessions() {
     try {
-      globalThis.fetch(MOUNT + '/api/session/list', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          type: 'client-request',
-          rpcId: nextRpcId(),
-          method: 'session/list',
-          payload: { args: { _request: {} } },
-        }),
-      }).then(function (response) { return response.json() }).then(function (envelope) {
-        var value = envelope && envelope.result && envelope.result.ok === true ? envelope.result.value : undefined
-        var items = value === undefined ? undefined : value.items
-        if (Array.isArray(items) !== true) return
-        var added = 0
-        for (var index = 0; index < items.length; index += 1) {
-          var item = items[index]
-          if (item === null || typeof item !== 'object' || typeof item.sessionId !== 'string') continue
-          if (remoteSessions.has(item.sessionId)) continue
-          var active = item.running === true || (typeof item.updatedAt === 'number' && item.updatedAt >= WINDOW_FLOOR)
-          if (active !== true) continue
-          remoteSessions.add(item.sessionId)
-          added += 1
-        }
-        if (added > 0) {
-      note('prefetch', { added: added, known: remoteSessions.size })
-      publishRemoteState()
-      refreshGroups()
-    }
+      readMountSessionList().then(function (items) {
+        if (items === undefined) return
+        var added = absorbRemoteSessions(items)
+        if (added === 0) return
+        note('prefetch', { added: added, known: remoteSessions.size })
+        publishRemoteState()
+        refreshGroups()
       }).then(function () {
         // This prefetch IS the first remote snapshot: the model-catalogue owner decision
         // waits on it, so it must settle even when the mount answered nothing.
@@ -95,19 +98,11 @@
 
   /** One unary call against the mounted Host, decoded to the carrier result. */
   async function remoteUnary(endpoint, payload, signal) {
-    var init = {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ type: 'client-request', rpcId: nextRpcId(), method: endpoint, payload: payload }),
-    }
-    if (signal !== undefined && signal !== null) init.signal = signal
-    var response = await globalThis.fetch(MOUNT + '/api/' + endpoint, init)
+    var response = await globalThis.fetch(MOUNT + '/api/' + endpoint, mountRequestInit(endpoint, payload, signal))
     if (response.ok !== true) throw new Error('drh: mount answered HTTP ' + String(response.status))
-    var envelope = await response.json()
-    if (envelope === null || typeof envelope !== 'object' || envelope.result === undefined) {
-      throw new Error('drh: invalid mount envelope')
-    }
-    return envelope.result
+    var result = mountResult(await response.json())
+    if (result === undefined) throw new Error('drh: invalid mount envelope')
+    return result
   }
 
   /** Merge two decoded session/list values with the display window applied. */
@@ -126,10 +121,10 @@
       var entry = remoteItems[other]
       if (entry === null || typeof entry !== 'object' || typeof entry.sessionId !== 'string') continue
       if (seen.has(entry.sessionId)) continue
-      var active = entry.running === true || (typeof entry.updatedAt === 'number' && entry.updatedAt >= WINDOW_FLOOR)
-      if (active !== true) continue
+      // A devbox accumulates hundreds of old sessions; the sidebar shows the recent ones plus
+      // anything still running. This is the same window rule every other list reader applies.
+      if (isActiveRemote(entry) !== true) continue
       seen.add(entry.sessionId)
-      remoteSessions.add(entry.sessionId)
       merged.push(labelRemoteItem(entry))
       added += 1
     }
@@ -150,10 +145,3 @@
     diag.streamBaseUrl = typeof base.streamBaseUrl === 'string' ? base.streamBaseUrl : null
     diag.installs = (typeof diag.installs === 'number' ? diag.installs : 0) + 1
   }
-
-  /** Build and publish the transport over `base`, chaining to it for local calls. */
-  /**
-   * Shim changes normally need a page reload, and the desktop shell has no reload
-   * shortcut. Compare the loaded revision with the one on disk while the page is
-   * hidden and reload then, so the refresh is invisible.
-   */

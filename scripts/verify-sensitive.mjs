@@ -13,9 +13,8 @@
  * docs/sensitive-data.md are allowed, and the allow-lists below are deliberate.
  */
 import { execFileSync } from "node:child_process"
-import { readFileSync } from "node:fs"
-
-const wantList = process.argv.includes("--list")
+import { readFileSync, realpathSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 
 /** Loopback and broadcast are the only IPv4 literals allowed (they are the local lab). */
 const ALLOWED_IPV4 = new Set(["127.0.0.1", "0.0.0.0", "255.255.255.255"])
@@ -41,7 +40,11 @@ const PASSWORD_KEY = "pass" + "word="
 /** Placeholder values that are fine after password= or Bearer. */
 const PLACEHOLDER_VALUE = /^(?:<[^>]*>|x{3,}|\.{3,}|example|changeme|redacted|your[-_])/i
 
-const rules = [
+/**
+ * One entry per class of leak. Exported so tests can drive each rule with a hit and with the
+ * documented placeholder that must stay legal; the gate itself only needs the array.
+ */
+export const rules = [
   {
     name: "ipv4-literal",
     find(line) {
@@ -153,41 +156,83 @@ function listFiles(args) {
   if (env.PATH === undefined) env.PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
   return execFileSync("git", args, { encoding: "utf8", env }).split("\u0000")
 }
-const files = Array.from(new Set([
-  ...listFiles(["ls-files", "-z"]),
-  ...listFiles(["ls-files", "--others", "--exclude-standard", "-z"]),
-]))
-  .filter((file) => file.length > 0 && SKIP.has(file) !== true)
-
-const hits = []
-for (const file of files) {
-  let text
-  try {
-    text = readFileSync(file, "utf8")
-  } catch (error) {
-    continue
+/**
+ * Apply every rule to one line.
+ * @param line - one line of text, without its terminator.
+ * @returns One hit per matching rule, in rule order.
+ */
+export function scanLine(line) {
+  const hits = []
+  for (const rule of rules) {
+    const found = rule.find(line)
+    if (found !== null) hits.push({ rule: rule.name, text: found })
   }
-  if (text.indexOf("\u0000") !== -1) continue
+  return hits
+}
+
+/**
+ * Scan a text the way the gate scans a file.
+ * @param text - file contents, newline-separated.
+ * @returns One hit per matching line and rule; `line` is 1-based to match editor output.
+ */
+export function scanText(text) {
+  const hits = []
   const lines = text.split("\n")
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]
-    for (const rule of rules) {
-      const found = rule.find(line)
-      if (found === null) continue
-      hits.push({ file, line: index + 1, rule: rule.name, text: found })
+    for (const hit of scanLine(lines[index])) hits.push({ line: index + 1, ...hit })
+  }
+  return hits
+}
+
+function main() {
+  const wantList = process.argv.includes("--list")
+  const files = Array.from(new Set([
+    ...listFiles(["ls-files", "-z"]),
+    ...listFiles(["ls-files", "--others", "--exclude-standard", "-z"]),
+  ]))
+    .filter((file) => file.length > 0 && SKIP.has(file) !== true)
+
+  const hits = []
+  for (const file of files) {
+    let text
+    try {
+      text = readFileSync(file, "utf8")
+    } catch (error) {
+      continue
     }
+    if (text.indexOf("\u0000") !== -1) continue
+    for (const hit of scanText(text)) hits.push({ file, ...hit })
+  }
+
+  for (const hit of hits) {
+    const suffix = wantList === true ? "  [" + hit.text + "]" : ""
+    console.log(hit.file + ":" + hit.line + " " + hit.rule + suffix)
+  }
+
+  if (hits.length === 0) {
+    console.log("verify-sensitive: no internal information found in " + files.length + " tracked files")
+    process.exit(0)
+  }
+  console.log("")
+  console.log("verify-sensitive: " + hits.length + " hit(s). Replace them with the placeholders in docs/sensitive-data.md.")
+  process.exit(1)
+}
+
+/**
+ * Whether this module is the script the operator started, rather than an import from a test.
+ *
+ * Both paths are realpath-ed because a symlinked directory (/tmp on macOS, a symlinked checkout)
+ * would otherwise compare unequal and make the gate exit 0 without scanning anything.
+ * @returns True only for the direct entry point.
+ */
+function invokedAsScript() {
+  if (process.argv[1] === undefined) return false
+  try {
+    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
+  } catch {
+    // argv[1] names nothing on disk, so this module was not started from it.
+    return false
   }
 }
 
-for (const hit of hits) {
-  const suffix = wantList === true ? "  [" + hit.text + "]" : ""
-  console.log(hit.file + ":" + hit.line + " " + hit.rule + suffix)
-}
-
-if (hits.length === 0) {
-  console.log("verify-sensitive: no internal information found in " + files.length + " tracked files")
-  process.exit(0)
-}
-console.log("")
-console.log("verify-sensitive: " + hits.length + " hit(s). Replace them with the placeholders in docs/sensitive-data.md.")
-process.exit(1)
+if (invokedAsScript()) main()

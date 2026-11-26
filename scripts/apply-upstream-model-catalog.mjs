@@ -21,6 +21,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { pnpmMissingMessage, resolvePnpm } from './lib/pnpm.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PATCH = join(HERE, 'patches', 'modelcatalog.patch')
@@ -42,6 +43,22 @@ function fail(message) {
 
 function git(repo, argv) {
   return execFileSync('git', argv, { cwd: repo, encoding: 'utf8' }).trim()
+}
+
+/**
+ * Run pnpm in the checkout.
+ * @param pnpm - executable to run, as returned by resolvePnpm.
+ * @param argv - arguments to pass through.
+ * @param cwd - checkout the command runs in.
+ * @returns Nothing; a missing executable reports the way out instead of a spawn stack.
+ */
+function pnpmRun(pnpm, argv, cwd) {
+  try {
+    return execFileSync(pnpm, argv, { cwd, stdio: 'inherit' })
+  } catch (error) {
+    if (error?.code === 'ENOENT') fail('cannot run ' + pnpm + ': executable not found; ' + pnpmMissingMessage())
+    throw error
+  }
 }
 
 const rawRepo = argOf('repo', '')
@@ -95,10 +112,14 @@ console.log('touched :')
 for (const line of touched) console.log('  ' + line)
 
 if (has('build') === true) {
+  // Resolve once so both steps drive the same pnpm; a shell without pnpm on PATH is reported by
+  // name and remedy instead of failing inside the first spawn with an ENOENT stack.
+  const pnpm = resolvePnpm({ cwd: repo })
+  if (pnpm === undefined) fail(pnpmMissingMessage())
   console.log('build   : pnpm install --ignore-scripts')
-  execFileSync('pnpm', ['install', '--ignore-scripts'], { cwd: repo, stdio: 'inherit' })
+  pnpmRun(pnpm, ['install', '--ignore-scripts'], repo)
   console.log('build   : pnpm run build:artifacts')
-  execFileSync('pnpm', ['run', 'build:artifacts'], { cwd: repo, stdio: 'inherit' })
+  pnpmRun(pnpm, ['run', 'build:artifacts'], repo)
   console.log('build   : done — packages/client/ui-model-selection/lib and packages/api/session-controller/lib are ready to copy')
 }
 

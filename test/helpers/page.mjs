@@ -202,12 +202,15 @@ export function createPage(options = {}) {
    * routing decisions need the same assertions as the fetch path.
    */
   const rpcCalls = []
+  // A decoded carrier answers with the Remote result itself, not the wire envelope: the shim's
+  // rpc branch returns that value straight to the caller, so an envelope here would leave every
+  // `result.ok` check undefined and hide the branch from the tests.
   const rpcCall = async (channel, endpoint, payload) => {
     rpcCalls.push({ channel, endpoint, payload })
     // A blip fails every leg; a caller must degrade, not reject.
     if (options.rpcFail === true) throw new Error('mount unreachable')
-    if (endpoint === 'session/list') return envelope({ items: localItems })
-    return envelope({})
+    if (endpoint === 'session/list') return { ok: true, value: { items: localItems } }
+    return { ok: true, value: {} }
   }
 
   /**

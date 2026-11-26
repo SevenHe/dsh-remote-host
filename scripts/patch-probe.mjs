@@ -16,6 +16,8 @@
  *     nested means a node was patched in place. The container-level count is the discriminator,
  *     because a patch also produces a nested mutation (the state dot is a child of the row).
  */
+import { Cdp, listPageTargets } from "./lib/cdp.mjs"
+
 const options = { cdp: 9222, url: "" }
 
 function fail (message) {
@@ -23,68 +25,12 @@ function fail (message) {
   process.exit(1)
 }
 
-class Cdp {
-  constructor (socket) {
-    this.socket = socket
-    this.nextId = 1
-    this.pending = new Map()
-    socket.addEventListener("message", (event) => {
-      let frame
-      try { frame = JSON.parse(event.data) } catch { return }
-      if (frame.id === undefined) return
-      const entry = this.pending.get(frame.id)
-      if (entry === undefined) return
-      this.pending.delete(frame.id)
-      if (frame.error !== undefined) entry.reject(new Error(entry.method + ": " + JSON.stringify(frame.error)))
-      else entry.resolve(frame.result)
-    })
-  }
-
-  send (method, params) {
-    const id = this.nextId
-    this.nextId += 1
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, method })
-      this.socket.send(JSON.stringify({ id, method, params: params === undefined ? {} : params }))
-    })
-  }
-
-  async evaluate (expression) {
-    const result = await this.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true, userGesture: true })
-    if (result.exceptionDetails !== undefined) {
-      const exception = result.exceptionDetails.exception
-      throw new Error("evaluate failed: " + String(exception === undefined ? result.exceptionDetails.text : exception.description))
-    }
-    return result.result.value
-  }
-
-  async click (x, y) {
-    const point = { x, y, button: "left", clickCount: 1 }
-    await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" })
-    await this.send("Input.dispatchMouseEvent", Object.assign({ type: "mousePressed" }, point))
-    await this.send("Input.dispatchMouseEvent", Object.assign({ type: "mouseReleased" }, point))
-  }
-
-  async escape () {
-    const key = { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 }
-    await this.send("Input.dispatchKeyEvent", Object.assign({ type: "keyDown" }, key))
-    await this.send("Input.dispatchKeyEvent", Object.assign({ type: "keyUp" }, key))
-  }
-}
-
 async function connect () {
-  const response = await fetch("http://127.0.0.1:" + options.cdp + "/json/list")
-  const targets = await response.json()
-  const pages = (Array.isArray(targets) ? targets : []).filter((t) => t.type === "page" && typeof t.webSocketDebuggerUrl === "string")
+  const pages = await listPageTargets(options.cdp)
   if (pages.length === 0) fail("no page target on CDP " + options.cdp)
   const page = options.url.length > 0 ? pages.find((t) => t.url.indexOf(options.url) !== -1) : pages[0]
   if (page === undefined) fail("no page target matching " + options.url)
-  const socket = new WebSocket(page.webSocketDebuggerUrl)
-  await new Promise((resolve, reject) => {
-    socket.addEventListener("open", resolve)
-    socket.addEventListener("error", () => reject(new Error("cdp socket error")))
-  })
-  return new Cdp(socket)
+  return await Cdp.open(page.webSocketDebuggerUrl)
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -109,11 +55,15 @@ const HARNESS = `
     { id: 'p-b', title: 'Bravo', updatedAt: now - 60000, running: false },
     { id: 'p-c', title: 'Charlie', updatedAt: now - 600000, running: false },
   ]
+  // The mount leg's connection status is one of the published facts a refresh reads; locking it
+  // lets a case flip it without a real tunnel.
+  const status = { remote: 'open', local: 'open' }
+  Object.defineProperty(window, '__DSH_REMOTE_HOST_STATUS__', { configurable: true, get: () => status, set: () => {} })
   Object.defineProperty(window, '__DSH_REMOTE_HOST_STATE__', { configurable: true, get: () => state, set: () => {} })
   Object.defineProperty(window, '__DSH_REMOTE_HOST_SESSIONS__', { configurable: true, get: () => sessions, set: () => {} })
   Object.defineProperty(window, '__DSH_REMOTE_HOST_MARKS__', { configurable: true, get: () => marks, set: () => {} })
   window.__probe = {
-    state, marks, sessions,
+    state, marks, sessions, status,
     fire (kind) { document.dispatchEvent(new CustomEvent('drh:' + kind, { detail: {} })) },
     seed () { this.fire('state'); this.fire('sessions'); this.fire('marks') },
     observe () {
@@ -216,6 +166,30 @@ const HARNESS = `
     setRunning (id, running) { this.sessions.find((s) => s.id === id).running = running; this.fire('sessions'); return true },
     setUpdated (id, at) { this.sessions.find((s) => s.id === id).updatedAt = at; this.fire('sessions'); return true },
     setPinned (ids) { this.marks.pinned = ids; this.fire('marks'); return true },
+    /** Tag the section header, its label and its status dot, to tell a patch from a rebuild. */
+    tagHeader () {
+      const container = document.querySelector('#drh-remote-block')
+      if (container === null) return false
+      this.headNode = container.querySelector('.drh-sectionHeader')
+      this.labelNode = container.querySelector('.drh-sectionLabel')
+      this.dotNode = container.querySelector('.drh-dot')
+      return this.headNode !== null && this.labelNode !== null && this.dotNode !== null
+    },
+    header () {
+      const container = document.querySelector('#drh-remote-block')
+      if (container === null) return { missing: true }
+      const head = container.querySelector('.drh-sectionHeader')
+      const label = container.querySelector('.drh-sectionLabel')
+      const dot = container.querySelector('.drh-dot')
+      return {
+        headerSame: head === this.headNode,
+        labelSame: label === this.labelNode,
+        dotSame: dot === this.dotNode,
+        dotState: dot === null ? null : dot.getAttribute('data-state'),
+      }
+    },
+    /** A mux leg republishes connecting then open; both are attribute-only changes. */
+    setStatus (state) { this.status.remote = state; this.fire('state'); return true },
   }
   return true
 })()
@@ -292,6 +266,20 @@ async function main () {
   const titled = await measure(cdp)
   const titledRow = await cdp.evaluate("window.__probe.row('p-b')")
   check("title text patched in place", titledRow.same === true && titledRow.title === "Bravo renamed" && titled.mutations.direct === 0, { same: titledRow.same, title: titledRow.title, written: titled.written, mutations: titled.mutations.direct })
+
+  // 3b. A connection flap patches the dot alone. The mux leg republishes connecting then open
+  //     on every reconnect, and counting that as a structural change used to rebuild the whole
+  //     block — the section label included, which is what a user sees as a blinking title.
+  if (await cdp.evaluate("window.__probe.tagHeader()") !== true) fail("the section header is not there to tag")
+  await cdp.evaluate("window.__probe.reset(); window.__probe.setStatus('connecting'); true")
+  const connecting = await measure(cdp)
+  const connectingHeader = await cdp.evaluate("window.__probe.header()")
+  check("flap -> dot patched, header and label kept", connectingHeader.headerSame === true && connectingHeader.labelSame === true && connectingHeader.dotSame === true && connectingHeader.dotState === "connecting" && connecting.mutations.direct === 0, { ...connectingHeader, mutations: connecting.mutations.direct })
+
+  await cdp.evaluate("window.__probe.reset(); window.__probe.setStatus('open'); true")
+  const recovered = await measure(cdp)
+  const recoveredHeader = await cdp.evaluate("window.__probe.header()")
+  check("recovery -> dot patched back, header and label kept", recoveredHeader.headerSame === true && recoveredHeader.labelSame === true && recoveredHeader.dotState === "open" && recovered.mutations.direct === 0, { ...recoveredHeader, mutations: recovered.mutations.direct })
 
   // 4. row menu: open and close patch the class, and the surface is end-anchored
   const rowMenuButton = await cdp.evaluate("window.__probe.center('#drh-remote-block [data-drh-session=\"p-b\"] [data-drh-rowmenu]')")

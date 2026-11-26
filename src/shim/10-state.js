@@ -1,7 +1,7 @@
 /**
  * MODULE: 10-state.js
- * What the shim publishes to the page (remote ids, workspace layout) and the event
- * bookkeeping that keeps remote waterfalls answerable.
+ * Decisions over one client request: the claim-Workspace create rewrite, which Host owns a
+ * Session or the model catalogue, and the session/list merge with the snapshot it publishes.
  */
   function localFetch(input, init) {
     return previous.fetch ? previous.fetch(input, init) : globalThis.fetch(input, init)
@@ -269,6 +269,26 @@
   }
 
   /**
+   * Teach the routing table every visible Session in one mounted list answer.
+   *
+   * The payload-based routing decision, the published layout and the group merge all read this
+   * set, so every reader of the list populates it through this one loop.
+   * @param items - session rows from the mounted host.
+   * @returns how many ids were new.
+   */
+  function absorbRemoteSessions(items) {
+    var added = 0
+    for (var index = 0; index < items.length; index += 1) {
+      var item = items[index]
+      if (item === null || typeof item !== 'object' || typeof item.sessionId !== 'string') continue
+      if (isActiveRemote(item) !== true || remoteSessions.has(item.sessionId) === true) continue
+      remoteSessions.add(item.sessionId)
+      added += 1
+    }
+    return added
+  }
+
+  /**
    * Publish the remote summaries the plugin-rendered block reads. With `group: none`
    * the shipped list never carries a remote Session, so this snapshot is the block's
    * only data source; the list merge and the event path both refresh it. A remote
@@ -311,6 +331,44 @@
     return published
   }
 
+  /** Digest of the last published session list, so an unchanged answer is not repainted. */
+  var remoteSessionsDigest = null
+
+  /** What one row shows: identity, freshness and activity, which is all a repaint reacts to. */
+  function sessionListDigest(items) {
+    var parts = []
+    for (var index = 0; index < items.length; index += 1) {
+      var item = items[index]
+      parts.push(String(item === null || item === undefined ? '' : item.sessionId) + ':'
+        + String(item === null || item === undefined ? '' : item.updatedAt) + ':'
+        + (item !== null && item !== undefined && item.running === true ? '1' : '0'))
+    }
+    return parts.join(',')
+  }
+
+  /**
+   * Publish one mounted session/list answer: teach the routing table its ids, then publish the
+   * snapshot the plugin block renders from.
+   *
+   * Every path that learns the mount's Session list goes through here. Publishing was wired into
+   * some of them only, so a page fed by the decoded rpc carrier had no block data until the 4 s
+   * poll came around.
+   * @param remoteItems - session rows from the mounted host.
+   */
+  function publishRemoteSessionList(remoteItems) {
+    absorbRemoteSessions(remoteItems)
+    // Only the row snapshot is digest-gated: it is the one publish that announces. The layout
+    // and the merged groups guard themselves, and they must still run when a merge learned an
+    // id whose row set happened to be unchanged.
+    var digest = sessionListDigest(remoteItems)
+    if (digest !== remoteSessionsDigest) {
+      remoteSessionsDigest = digest
+      publishRemoteSessions(remoteItems)
+    }
+    publishRemoteState()
+    refreshGroups()
+  }
+
   /** Upper bound for any request to the mounted host, so a dead remote cannot block the UI. */
   var MOUNT_TIMEOUT_MS = 2500
 
@@ -342,38 +400,15 @@
     var remoteBody = await remote.json()
     if (localBody === null || typeof localBody !== 'object' || !localBody.result || localBody.result.ok !== true) return new Response(JSON.stringify(localBody), { status: 200, headers: { 'content-type': 'application/json' } })
     if (remoteBody === null || typeof remoteBody !== 'object' || !remoteBody.result || remoteBody.result.ok !== true) return new Response(JSON.stringify(localBody), { status: 200, headers: { 'content-type': 'application/json' } })
-    var localItems = Array.isArray(localBody.result.value && localBody.result.value.items) ? localBody.result.value.items : []
-    var remoteItems = Array.isArray(remoteBody.result.value && remoteBody.result.value.items) ? remoteBody.result.value.items : []
-    var seen = new Set()
-    var merged = []
-    for (var index = 0; index < localItems.length; index += 1) {
-      var item = localItems[index]
-      if (item && typeof item.sessionId === 'string') seen.add(item.sessionId)
-      merged.push(item)
-    }
-    for (var other = 0; other < remoteItems.length; other += 1) {
-      var entry = remoteItems[other]
-      if (entry === null || typeof entry !== 'object' || typeof entry.sessionId !== 'string') continue
-      if (seen.has(entry.sessionId)) continue
-      // A devbox accumulates hundreds of old sessions; the sidebar shows the
-      // recent ones plus anything still running.
-      var active = entry.running === true || (typeof entry.updatedAt === 'number' && entry.updatedAt >= WINDOW_FLOOR)
-      if (active !== true) continue
-      seen.add(entry.sessionId)
-      remoteSessions.add(entry.sessionId)
-      merged.push(labelRemoteItem(entry))
-    }
-    // Publish the remote summaries so a plugin-rendered block can show titles and times
-    // without the shipped list carrying remote sessions.
-    try { publishRemoteSessions(remoteItems) } catch (error) { /* publishing is best effort */ }
-    var value = {}
-    for (var key in localBody.result.value) { if (Object.prototype.hasOwnProperty.call(localBody.result.value, key)) value[key] = localBody.result.value[key] }
-    // The remote rows always ride along: they are the client catalog's only source for a
-    // remote id, and the claiming Workspace keeps them out of the shipped Ungrouped bucket.
-    value.items = merged
-    note('list-merge', { local: localItems.length, remote: remoteItems.length, visible: merged.length - localItems.length })
-    publishRemoteState()
-    refreshGroups()
-    return envelope(localBody.rpcId, value)
+    // One merge and one publish, shared with the decoded rpc carrier: the two hand-written
+    // copies had already drifted apart in which side published what.
+    var merged = mergeListValues(localBody.result.value, remoteBody.result.value)
+    note('list-merge', { local: merged.localCount, remote: merged.remoteCount, visible: merged.visibleRemote })
+    // The remote rows always ride along inside merged.value.items: they are the client
+    // catalog's only source for a remote id, and the claiming Workspace keeps them out of
+    // the shipped Ungrouped bucket.
+    var remoteItems = sessionItemsOf(remoteBody.result)
+    try { publishRemoteSessionList(remoteItems === undefined ? [] : remoteItems) } catch (error) { /* publishing is best effort */ }
+    return envelope(localBody.rpcId, merged.value)
   }
 

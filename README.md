@@ -3,6 +3,21 @@
 > **UI 对齐规范**：[`docs/ui-parity.md`](docs/ui-parity.md)（入口 / 测量姿势 / token 与原子 / 基线表 / 陷阱 / checklist）
 > · 回归清单 [`docs/regression.md`](docs/regression.md) · 兼容矩阵 [`docs/compatibility.md`](docs/compatibility.md) · 崩溃排查 [`docs/crash-triage.md`](docs/crash-triage.md)
 
+## Repository layout
+
+Four layers, deliberately without a bundler:
+
+| Path | What it is | How it is produced |
+|---|---|---|
+| `lib/index.js`, `lib/remote-mux.js`, `lib/credential-mint.js` | Host half: the ssh tunnel, credential acquisition, the mounted routes, the two proxies | written by hand, shipped as-is |
+| `src/shim/*.js` → `lib/shim.js` | Page shim: a classic script injected into the renderer | concatenated in filename order by `scripts/build-shim.mjs`; `--check` fails on a stale build |
+| `lib/client.js` | Client half: the sidebar block, remote rows and the sections renderer | **written by hand as a single closure**; no TypeScript, no build step |
+| `src/client/**` | Read-only copies of upstream `ui-workspace` sources, kept for comparison | see `src/client/PROVENANCE.md`; **nothing imports them** |
+
+The directory names invert the usual convention: the implementation of the client half is
+`lib/client.js`, while `src/client/` is reference material. Read `PROVENANCE.md` before
+changing either.
+
 ## Contributing and CI
 
 `CONTRIBUTING.md` describes the edit → build → verify → push loop. CI
@@ -268,14 +283,18 @@ this app (Host + official UI)                    remote machine (real DSH)
 
 Nothing is installed on the remote, and the remote keeps running untouched.
 
-1. **Host half** (`lib/index.js`) mounts the remote origin on this Host's own
+1. **Host half** (`lib/index.js` + `lib/routes.js` + `lib/credentials.js`) mounts the remote origin on this Host's own
    origin at `/devbox`:
    - `/devbox/<path>` — HTTP relay with the remote's own session cookie injected
      and `Host` rewritten (the remote fence demands its own authority);
    - `/devbox/api/remote.mux` — WebSocket relay for the remote stream mux;
-   - `webServer.tapIndex` — injects the browser shim ahead of app bootstrap.
-   The mount sits behind the same connection fence as `/api`, and every failure
-   is contained: a broken mount logs and leaves a normal Harness.
+   - a `webserver/index-inject` row — prepends the browser shim to the page `<head>`
+     (an index row, not `tapIndex`).
+   Each route states its admission in `lib/routes.js`'s `ADMISSION` table: the HTTP mount,
+   `/orchestrator/api` and the mux relay re-check the local connection policy, while the two
+   upgrade relays are exempt — an anonymous route reaches its handler without a Peer to judge,
+   and the Host/Origin fence has already run before any policy. Every failure is contained: a
+   broken mount logs and leaves a normal Harness.
 2. **Browser shim** (`lib/shim.js`) installs `__DSH_TRANSPORT__` and owns one
    decision per call — local or remote:
    - `/api/session/list` → both hosts, merged into one envelope;
@@ -722,8 +741,8 @@ Verified against a real 0.2.2-rc.3 instance:
   expires (30 days) or the remote credential store is recreated.
 * **Reachability**: the relay speaks plain HTTP to the remote; use SSH
   forwarding or a trusted network when that hop is not already private.
-* The mount is only as safe as the local Host's own access policy — it is
-  admitted by the same connection fence as `/api`.
+* The mount is only as safe as the local Host's own access policy — per-route admission is
+  declared in `lib/routes.js`'s `ADMISSION` table (see the Host half above).
 
 ## 贡献与发布要求
 

@@ -1,7 +1,7 @@
 /**
  * MODULE: 20-transport.js
- * Request classification: which calls belong to the remote host, how the mount and
- * mux socket URLs are derived, and the error-envelope helper.
+ * Request classification: which calls belong to the remote host, the remote waterfall
+ * answer rewrite, the catalogue owner, and how the mount and mux socket URLs are derived.
  */
   /** Rewrite a remote waterfall answer so the remote peer accepts it. */
   function rewriteEventResult(init) {
@@ -242,6 +242,37 @@
       return localFetch(mountUrl(input), init)
     }
     return localFetch(input, init)
+  }
+
+  /**
+   * The envelope one unary call travels in.
+   *
+   * The poll, the boot prefetch and the decoded rpc carrier all send this same request, so it is
+   * built here once; a second hand-written copy is exactly how one of them drifted.
+   * @param endpoint - Host method name.
+   * @param payload - that method's payload.
+   * @param signal - optional abort signal, passed through when present.
+   * @returns the fetch init for MOUNT + '/api/' + endpoint.
+   */
+  function mountRequestInit(endpoint, payload, signal) {
+    var init = {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'client-request', rpcId: nextRpcId(), method: endpoint, payload: payload }),
+    }
+    if (signal !== undefined && signal !== null) init.signal = signal
+    return init
+  }
+
+  /**
+   * The result object of one mount answer, when it has the carrier result shape.
+   * @param envelope - the decoded response body.
+   * @returns the result object, or undefined when this is not a usable answer.
+   */
+  function mountResult(envelope) {
+    if (envelope === null || typeof envelope !== 'object') return undefined
+    var result = envelope.result
+    return result !== null && typeof result === 'object' ? result : undefined
   }
 
   /** Resolve the same channel beneath the mount, preserving scheme and query. */

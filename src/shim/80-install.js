@@ -62,6 +62,7 @@
     } catch (error) { /* self update is best effort */ }
   }
 
+  /** Build and publish the transport over `base`, chaining to it for local calls. */
   function install(base) {
     previous = base
     refreshDiag(base)
@@ -182,6 +183,11 @@
               }
               var merged = mergeListValues(localResult.value, remoteResult.value)
               note('list-merge', { local: merged.localCount, remote: merged.remoteCount, visibleRemote: merged.visibleRemote })
+              // The rpc carrier merges like the fetch one, so it publishes like it too: the
+              // plugin-rendered block reads only the published snapshot, and without this a
+              // group:none page had to wait for the 4 s poll to see a remote Session.
+              var remoteItems = sessionItemsOf(remoteResult)
+              try { publishRemoteSessionList(remoteItems === undefined ? [] : remoteItems) } catch (error) { /* publishing is best effort */ }
               return { ok: true, value: merged.value }
             })
           }
@@ -237,7 +243,6 @@
     }
     built.__dshRemoteHost = true
     globalThis.__DSH_TRANSPORT__ = built
-    hooks = built
     note('installed', { carrier: diag.hasRpc === true ? 'rpc' : 'fetch', streams: STREAMS, streamBaseUrl: diag.streamBaseUrl, group: GROUP_MODE })
     prefetchWorkspaces()
     prefetchRemoteSessions()
@@ -246,7 +251,7 @@
     return built
   }
 
-  var hooks = install(previous)
+  install(previous)
   installSelfUpdate()
 
   // The shell may publish its carrier after page scripts run. Adopt whatever is
@@ -278,9 +283,6 @@
     adoptedAtBoot = true
     return true
   }
-  var schedule = typeof globalThis.setTimeout === 'function'
-    ? globalThis.setTimeout.bind(globalThis)
-    : undefined
 
   /**
    * Watch for a carrier the shell publishes after this script, for a bounded time.
