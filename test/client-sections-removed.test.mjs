@@ -37,8 +37,8 @@ function createCtx() {
 }
 
 /**
- * Collect what the module writes to the console, which is the only thing the removed mode
- * still produces. The page stub's console is a silent stub, so this replaces it before apply.
+ * Collect what the module writes to the console, so a case can assert the removed key stays silent.
+ * The page stub's console is a silent stub, so this replaces it before apply.
  */
 function captureWarnings(page) {
   const warnings = []
@@ -46,14 +46,13 @@ function captureWarnings(page) {
   return warnings
 }
 
-test('sections: the removed key warns once and takes nothing over', () => {
+test('sections: the stale key is inert and takes nothing over', () => {
   const page = createClientPage({ config: { sections: true } })
   const warnings = captureWarnings(page)
   const { ctx, effects, injections } = createCtx()
   page.plugin.apply(ctx)
-  assert.equal(warnings.length, 1, 'exactly one deprecation warning')
-  assert.match(warnings[0], /removed/)
-  assert.match(warnings[0], /remoteBlock/, 'the warning names the replacement')
+  assert.deepEqual(warnings, [], 'a key the plugin no longer knows produces no warning')
+
   assert.deepEqual(injections, [], 'the shipped sidebar list is left in place')
   assert.equal(effects.length, 0, 'nothing is registered')
   assert.equal(page.document.blockCount(), 0)
@@ -64,7 +63,7 @@ test('sections: the stale key does not suppress the modes that survive beside it
   const warnings = captureWarnings(page)
   const { ctx, effects, disposers, injections } = createCtx()
   page.plugin.apply(ctx)
-  assert.equal(warnings.length, 1)
+  assert.deepEqual(warnings, [], 'silent')
   assert.deepEqual(injections, [], 'still no slot takeover')
   assert.equal(effects.length, 1)
   assert.equal(page.document.blockCount(), 1, 'the block mounts exactly as it does without the key')
