@@ -3,12 +3,12 @@ import assert from 'node:assert/strict'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import test from 'node:test'
-import { sshMintArgs } from '../lib/credential-mint.js'
+import { bannerSourcesCommand, sshMintArgs } from '../lib/credential-mint.js'
 import { makeRefresher } from '../lib/credentials.js'
 import { controlArgs, controlPathFor, DEFAULT_CONTROL_DIR, exitArgs } from '../lib/ssh-control.js'
 
 /** A banner read's remote command, as `readEntryUrl` builds it. */
-const COMMAND = "tmux capture-pane -p -S -4000 -t 'dsh-main' 2>/dev/null"
+const COMMAND = bannerSourcesCommand({ tmuxSession: 'dsh-main' })
 
 /** The argv a mint used before multiplexing existed: what a disabled mint must still produce. */
 const LEGACY = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-T', 'devbox', COMMAND]

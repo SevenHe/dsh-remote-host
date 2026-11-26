@@ -10,7 +10,7 @@ import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { readEntryUrl, shellQuote } from '../lib/credential-mint.js'
+import { bannerSourcesCommand, readEntryUrl, shellQuote } from '../lib/credential-mint.js'
 
 const ENTRY = 'http://127.0.0.1:3080/?token=banner-token'
 const BIN = mkdtempSync(join(tmpdir(), 'drh-quote-bin-'))
@@ -96,7 +96,7 @@ test('shell quoting: a session name is one literal shell word', async () => {
 test('shell quoting: the command wraps the name in single quotes and splices a quote safely', async () => {
   await withFakeSsh({}, async () => {
     await readEntryUrl({ sshHost: 'devbox', tmuxSession: "it's mine" })
-    assert.equal(lastCommand(), "tmux capture-pane -p -S -4000 -t 'it'\\''s mine' 2>/dev/null", 'the quote is spliced, not escaped with a backslash inside double quotes')
+    assert.equal(lastCommand(), bannerSourcesCommand({ tmuxSession: "it's mine" }), 'the quote is spliced, not escaped with a backslash inside double quotes')
     assert.equal(shellQuote('plain'), "'plain'")
     assert.equal(shellQuote("a'b"), "'a'\\''b'")
   })
